@@ -73,6 +73,17 @@ def worth_dreaming(log: dict, handoff_text: str) -> bool:
             return True
     return False
 
+def reset_for_resume(path: Path) -> None:
+    """Resume prep: any non-shipped item -> pending for a clean retry.
+    Administrative write that bypasses the normal transition rules (a crash can
+    leave an item in awaiting_judge/needs_fix/failed, none of which legally
+    transition back to awaiting_judge)."""
+    log = read_run_log(path)
+    for it in log["items"]:
+        if it["status"] != "shipped":
+            it["status"] = "pending"
+    _write(path, log)
+
 def _section_body(text: str, heading: str) -> str:
     lines = text.splitlines()
     out, capture = [], False

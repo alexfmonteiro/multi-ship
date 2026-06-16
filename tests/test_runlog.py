@@ -48,3 +48,15 @@ def test_unknown_item_raises(tmp_path):
     init_run_log(p, order=["a.md"], stop_on_failure=True, notification_surface="none")
     with pytest.raises(StatusError, match="unknown item"):
         set_item_status(p, "z.md", "awaiting_judge")
+
+def test_reset_for_resume_nonterminal_and_failed_to_pending(tmp_path):
+    from multi_ship.runlog import reset_for_resume
+    p = tmp_path / "run-log.json"
+    init_run_log(p, order=["a.md", "b.md", "c.md", "d.md"], stop_on_failure=True, notification_surface="none")
+    set_item_status(p, "a.md", "awaiting_judge"); set_item_status(p, "a.md", "shipped")
+    set_item_status(p, "b.md", "awaiting_judge")          # crashed mid-judge
+    set_item_status(p, "c.md", "awaiting_judge"); set_item_status(p, "c.md", "failed")  # failed last run
+    # d.md stays pending
+    reset_for_resume(p)
+    st = {i["id"]: i["status"] for i in read_run_log(p)["items"]}
+    assert st == {"a.md": "shipped", "b.md": "pending", "c.md": "pending", "d.md": "pending"}

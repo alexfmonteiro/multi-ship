@@ -68,5 +68,6 @@ def run_notify(notify_cmd: str, message: str) -> None:
         return
     try:
         subprocess.run(notify_cmd, shell=True, input=message, text=True)
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as e:
+        import sys
+        print(f"multi-ship: notify command failed: {e}", file=sys.stderr)

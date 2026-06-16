@@ -52,9 +52,14 @@ def main(argv=None) -> int:
     specs = _resolve_specs(args, cfg)
     if not specs:
         print("no specs to ship", file=sys.stderr); return 1
+    state_dir = repo / ".multi-ship"
+    if (state_dir / "run-log.json").exists() and not args.resume:
+        print("a previous run-log exists at .multi-ship/run-log.json — pass --resume "
+              "to continue it, or remove .multi-ship/ to start fresh", file=sys.stderr)
+        return 2
     result = driver.run_loop(repo=str(repo), specs=specs, cfg=cfg,
                              stop_on_failure=not args.continue_on_failure,
-                             state_dir=repo / ".multi-ship")
+                             state_dir=state_dir, resume=args.resume)
     print(f"shipped: {result['shipped']}  stopped_at: {result['stopped_at']}")
     return 0 if result["stopped_at"] is None else 2
 

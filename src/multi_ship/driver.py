@@ -8,7 +8,10 @@ from . import claude_cli, runlog, handoff, endrun
 from .config import Config
 
 def _caffeinate():
-    return subprocess.Popen(["caffeinate", "-dimsu"])
+    try:
+        return subprocess.Popen(["caffeinate", "-dimsu"])
+    except FileNotFoundError:
+        return None  # non-macOS: no-op, the run just isn't sleep-protected
 
 def _kill_caffeinate(proc):
     if proc:
@@ -21,14 +24,22 @@ def _merge_pr(pr: str, repo: str):
 def _read_json(p: Path) -> dict:
     return json.loads(Path(p).read_text())
 
+def _fix_prompt(sid: str, reason: str) -> str:
+    """Build the --fix re-dispatch prompt, neutralizing quotes/newlines in the
+    judge-authored reason so the single quoted arg isn't split."""
+    safe = (reason or "").replace('"', "'").replace("\n", " ").strip()
+    return f'/ship-one {sid} --fix "{safe}"'
+
 def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
-             state_dir: Path) -> dict:
+             state_dir: Path, resume: bool = False) -> dict:
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     run_log = state_dir / "run-log.json"
     if not run_log.exists():
         runlog.init_run_log(run_log, order=specs, stop_on_failure=stop_on_failure,
                             notification_surface=cfg.notify)
+    elif resume:
+        runlog.reset_for_resume(run_log)
     init_h = state_dir / "HANDOFF.md"
     handoff.init_handoff(init_h)
     baseline = endrun.git_snapshot(repo)
@@ -42,7 +53,16 @@ def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
             if sid is None:
                 break
             attempted.add(sid)
-            ok = _process_item(sid, repo, cfg, state_dir, run_log)
+            try:
+                ok = _process_item(sid, repo, cfg, state_dir, run_log)
+            except (FileNotFoundError, claude_cli.ClaudeError, runlog.StatusError) as e:
+                # a skill didn't write its file, claude -p failed, or an unexpected
+                # state — fail the item but keep the run alive so end-of-run notify fires.
+                try:
+                    runlog.set_item_status(run_log, sid, "failed", error=str(e)[:300])
+                except runlog.StatusError:
+                    pass
+                ok = False
             log = runlog.read_run_log(run_log)
             if ok:
                 shipped.append(sid)
@@ -77,7 +97,7 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
         if attempt == 0:
             # re-dispatch ship-one to FIX using the judge's reason, then re-judge
             runlog.set_item_status(run_log, sid, "needs_fix")
-            claude_cli.run(f"/ship-one {sid} --fix \"{verdict.get('reason','')}\"", repo=repo)
+            claude_cli.run(_fix_prompt(sid, verdict.get("reason", "")), repo=repo)
             item = _read_json(state_dir / f"item-{sid}.json")
             runlog.set_item_status(run_log, sid, "awaiting_judge", pr=item.get("pr"))
     runlog.set_item_status(run_log, sid, "failed", judge_reason=verdict.get("reason"))

@@ -105,3 +105,32 @@ def test_continue_on_failure_advances_past_failed(tmp_path, monkeypatch):
                              stop_on_failure=False, state_dir=state)
     assert result["shipped"] == ["b.md"]
     assert result["stopped_at"] is None
+
+def test_resume_completes_after_crash(tmp_path, monkeypatch):
+    from multi_ship import runlog
+    state = tmp_path / ".multi-ship"; state.mkdir(parents=True)
+    rl = state / "run-log.json"
+    runlog.init_run_log(rl, order=["a.md", "b.md"], stop_on_failure=True, notification_surface="none")
+    runlog.set_item_status(rl, "a.md", "awaiting_judge"); runlog.set_item_status(rl, "a.md", "shipped")
+    runlog.set_item_status(rl, "b.md", "awaiting_judge")   # crash state
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one b.md"):
+            (state / "item-b.md.json").write_text(json.dumps({"status": "awaiting_judge", "pr": "http://pr/9"}))
+            return {"result": "x"}
+        if prompt.startswith("/judge-shipped b.md"):
+            (state / "verdict-b.md.json").write_text(json.dumps({"ok": True, "reason": "ok"}))
+            return {"result": "x"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: None)
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md", "b.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state, resume=True)
+    assert result["shipped"] == ["b.md"]   # a.md already shipped (skipped); b.md retried cleanly
+
+def test_fix_prompt_neutralizes_quotes_and_newlines():
+    from multi_ship.driver import _fix_prompt
+    p = _fix_prompt("a.md", 'missing "foo" test\nand bar')
+    assert p == "/ship-one a.md --fix \"missing 'foo' test and bar\""
+    assert p.count('"') == 2  # only the wrapping quotes remain
