@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Resolve the repo root from this script's location (handles symlinks).
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"; SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+exec python3 -c "import sys; sys.path.insert(0, '$ROOT/src'); from multi_ship.cli import main; raise SystemExit(main())" "$@"

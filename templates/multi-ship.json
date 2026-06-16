@@ -1,0 +1,16 @@
+{
+  "build_workflow": "mixed-model-burst",
+  "spec_glob": "docs/specs/*.md",
+  "verify": "gh pr checks $PR --watch",
+  "notify": "echo NOTIFY:",
+  "pr_body_convention": "Closes #{issue}",
+  "complete_cmd": "/complete-spec {slug}",
+  "test_cmd": "<your project's test command, e.g. pytest -x>",
+  "build_invariants": "<one paragraph of your project's must-honor invariants>",
+  "smoke_instructions": "<how to exercise a new code path end-to-end>",
+  "roles": {
+    "scout": "haiku", "reader": "haiku", "planner": "opus",
+    "judges": ["opus", "sonnet", "haiku"],
+    "coder": {"hard": "opus", "routine": "sonnet"}, "verifier": "opus"
+  }
+}
