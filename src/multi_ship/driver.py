@@ -76,9 +76,14 @@ def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
     return {"shipped": shipped, "stopped_at": stopped_at}
 
 def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Path) -> bool:
-    # Build + ship-tail → ship-one writes item-<id>.json, pauses before merge
+    # State files are keyed by the spec FILENAME (the skill contract), not the
+    # full spec path — a path like docs/specs/x.md would otherwise become a
+    # nested filename `item-docs/specs/x.md.json`. The prompt still gets the full
+    # spec path so the skill can locate the spec.
+    iid = Path(sid).name
+    # Build + ship-tail → ship-one writes item-<filename>.json, pauses before merge
     claude_cli.run(f"/ship-one {sid}", repo=repo)
-    item = _read_json(state_dir / f"item-{sid}.json")
+    item = _read_json(state_dir / f"item-{iid}.json")
     if item.get("status") == "failed":
         runlog.set_item_status(run_log, sid, "failed", **{k: item.get(k) for k in ("pr",) if item.get(k)})
         return False
@@ -87,7 +92,7 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
     # Cold judge, with one fix retry
     for attempt in range(2):
         claude_cli.run(f"/judge-shipped {sid} {item.get('pr','')}", repo=repo)
-        verdict = _read_json(state_dir / f"verdict-{sid}.json")
+        verdict = _read_json(state_dir / f"verdict-{iid}.json")
         if verdict.get("ok"):
             _merge_pr(item["pr"], repo)
             slug = Path(sid).stem
@@ -98,7 +103,7 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
             # re-dispatch ship-one to FIX using the judge's reason, then re-judge
             runlog.set_item_status(run_log, sid, "needs_fix")
             claude_cli.run(_fix_prompt(sid, verdict.get("reason", "")), repo=repo)
-            item = _read_json(state_dir / f"item-{sid}.json")
+            item = _read_json(state_dir / f"item-{iid}.json")
             runlog.set_item_status(run_log, sid, "awaiting_judge", pr=item.get("pr"))
     runlog.set_item_status(run_log, sid, "failed", judge_reason=verdict.get("reason"))
     return False

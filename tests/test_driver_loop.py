@@ -134,3 +134,26 @@ def test_fix_prompt_neutralizes_quotes_and_newlines():
     p = _fix_prompt("a.md", 'missing "foo" test\nand bar')
     assert p == "/ship-one a.md --fix \"missing 'foo' test and bar\""
     assert p.count('"') == 2  # only the wrapping quotes remain
+
+
+def test_item_id_uses_filename_not_full_path(tmp_path, monkeypatch):
+    # Regression: a spec under docs/specs/ must key state files by FILENAME
+    # (item-x.md.json), not the full path (item-docs/specs/x.md.json → nested,
+    # FileNotFoundError). Caught by the first live smoke.
+    state = tmp_path / ".multi-ship"; state.mkdir(parents=True)
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-x.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/3"}))
+            return {"result": "x"}
+        if prompt.startswith("/judge-shipped"):
+            (state / "verdict-x.md.json").write_text(json.dumps({"ok": True, "reason": "ok"}))
+            return {"result": "x"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: None)
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["docs/specs/x.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == ["docs/specs/x.md"]
