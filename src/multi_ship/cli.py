@@ -32,20 +32,22 @@ def _resolve_specs(args, cfg) -> list[str]:
 
 def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
+    pkg_root = Path(__file__).resolve().parent.parent.parent
+
+    # `init` is handled before argparse: a subparser would capture the first
+    # positional, breaking the primary `multi-ship <specs...>` form.
+    if argv and argv[0] == "init":
+        repo = argv[1] if len(argv) > 1 and not argv[1].startswith("-") else "."
+        cmd_init(repo, template_path=pkg_root / "templates" / "multi-ship.json")
+        print(f"initialized {repo}/.claude/multi-ship.json")
+        return 0
+
     p = argparse.ArgumentParser(prog="multi-ship")
-    sub = p.add_subparsers(dest="command")
-    pi = sub.add_parser("init"); pi.add_argument("repo", nargs="?", default=".")
     p.add_argument("specs", nargs="*")
     p.add_argument("--repo", default=".")
     p.add_argument("--continue-on-failure", action="store_true")
     p.add_argument("--resume", action="store_true")
     args = p.parse_args(argv)
-
-    pkg_root = Path(__file__).resolve().parent.parent.parent
-    if args.command == "init":
-        cmd_init(args.repo, template_path=pkg_root / "templates" / "multi-ship.json")
-        print(f"initialized {args.repo}/.claude/multi-ship.json")
-        return 0
 
     repo = Path(args.repo).resolve()
     cfg = load_config(repo / ".claude" / "multi-ship.json")
