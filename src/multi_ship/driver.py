@@ -4,6 +4,7 @@ import json
 import platform
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from . import claude_cli, runlog, handoff, endrun, notify_telegram
@@ -39,9 +40,28 @@ def _kill_caffeinate(proc):
     if proc:
         proc.terminate()
 
+def _pr_state(pr: str, repo: str) -> str:
+    try:
+        r = subprocess.run(["gh", "pr", "view", pr, "--json", "state", "-q", ".state"],
+                           cwd=repo, capture_output=True, text=True, check=True)
+        return r.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
 def _merge_pr(pr: str, repo: str):
-    subprocess.run(["gh", "pr", "merge", pr, "--squash", "--delete-branch"],
-                   cwd=repo, check=True)
+    r = subprocess.run(["gh", "pr", "merge", pr, "--squash", "--delete-branch"],
+                       cwd=repo, capture_output=True, text=True)
+    if r.returncode == 0:
+        return
+    # Non-zero can mean the squash merge succeeded but post-merge branch cleanup
+    # failed (e.g. a leftover build worktree still has the branch checked out).
+    # That must NOT crash the run — fail-soft per the repo invariant. Only re-raise
+    # if the PR did not actually merge (a real merge failure must fail the item).
+    if _pr_state(pr, repo) == "MERGED":
+        sys.stderr.write(f"multi-ship: {pr} merged but branch cleanup failed "
+                         f"(non-fatal): {(r.stderr or '').strip()}\n")
+        return
+    raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
 
 def _read_json(p: Path) -> dict:
     return json.loads(Path(p).read_text())
