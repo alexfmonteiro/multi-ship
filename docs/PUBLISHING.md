@@ -17,20 +17,37 @@ Add a dated section to `CHANGELOG.md`.
 The wheel is already PyPI-ready and bundles the skills/templates/workflow (see
 `[tool.hatch.build.targets.wheel.force-include]` in `pyproject.toml`).
 
+### Automated (recommended): tag a release
+
+`.github/workflows/release.yml` builds and publishes to PyPI via **Trusted
+Publishing** (OIDC — no API token stored in the repo) whenever you push a `v*`
+tag. One-time setup:
+
+1. **PyPI** → the `multi-ship` project → *Publishing* → add a GitHub trusted
+   publisher: owner `alexfmonteiro`, repo `multi-ship`, workflow `release.yml`,
+   environment `pypi`. (For the very first release, use PyPI's *pending publisher*
+   form since the project doesn't exist yet.)
+2. **GitHub** → Settings → Environments → create an environment named `pypi`.
+
+Then cut a release:
+
 ```bash
-# build sdist + wheel
-python -m build
+# bump the version in all three manifests + CHANGELOG, commit, then:
+git tag v0.1.1 && git push origin v0.1.1
+```
 
-# sanity-check metadata + long description render
-pipx run twine check dist/*
+The workflow runs the version-sync guard, builds, `twine check`s, and publishes.
 
-# verify the wheel installs and resolves bundled resources in a clean venv
+### Manual
+
+```bash
+python -m build                      # sdist + wheel
+pipx run twine check dist/*          # metadata + long-description render
+# verify the wheel installs and resolves bundled resources in a clean venv:
 python -m venv /tmp/v && /tmp/v/bin/pip install dist/*.whl
 HOME=/tmp/vhome /tmp/v/bin/multi-ship install-skills   # should link all 5 skills
-
-# upload (TestPyPI first, then PyPI)
-pipx run twine upload --repository testpypi dist/*
-pipx run twine upload dist/*
+pipx run twine upload --repository testpypi dist/*     # TestPyPI first
+pipx run twine upload dist/*                           # then PyPI
 ```
 
 Once published, the README's recommended install simplifies to:
@@ -39,9 +56,6 @@ Once published, the README's recommended install simplifies to:
 pipx install multi-ship
 multi-ship install-skills
 ```
-
-Prefer **PyPI Trusted Publishing** (OIDC from GitHub Actions) over a long-lived
-API token — add a `release.yml` workflow triggered on `v*` tags.
 
 ## Claude Code plugin / marketplace
 
@@ -70,6 +84,12 @@ points at `{ "source": "github", "repo": "alexfmonteiro/multi-ship" }`.
 
 ### CI guard
 
-Consider adding a job to `.github/workflows/test.yml` that runs
-`claude plugin validate . --strict` (when the CLI is available) so a malformed
-manifest can't land on `main`.
+`.github/workflows/plugin.yml` guards `main` on every push/PR:
+
+- **Blocking:** `scripts/validate_plugin.py` — pure-Python, no auth. Checks both
+  manifests parse, required keys are present, every `skills/<name>/` has a
+  `SKILL.md`, and the version matches across `pyproject.toml`, `plugin.json`, and
+  `marketplace.json`.
+- **Best-effort:** `claude plugin validate . --strict` via the npm-installed CLI.
+  CI has no authenticated Claude session, so this step is informational and can't
+  block the merge — run it locally before tagging a release.

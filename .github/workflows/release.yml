@@ -1,0 +1,43 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+# Publishes to PyPI via Trusted Publishing (OIDC) — no API token stored in the
+# repo. One-time setup (see docs/PUBLISHING.md):
+#   1. PyPI → project → Publishing → add a GitHub trusted publisher:
+#        owner=alexfmonteiro, repo=multi-ship, workflow=release.yml, environment=pypi
+#   2. GitHub → Settings → Environments → create `pypi`.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Verify manifests + version sync (tag must match the code)
+        run: python scripts/validate_plugin.py
+      - name: Build sdist + wheel
+        run: pipx run build
+      - name: Check distribution metadata
+        run: pipx run twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi-publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/multi-ship/
+    permissions:
+      id-token: write  # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
