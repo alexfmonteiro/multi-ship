@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import claude_cli, runlog, handoff, endrun
+from . import claude_cli, runlog, handoff, endrun, notify_telegram
 from .config import Config
 
 def _stay_awake_cmd() -> list[str] | None:
@@ -147,4 +147,7 @@ def _end_of_run(repo: str, cfg: Config, state_dir: Path, run_log: Path,
     msg = endrun.format_notification(shipped, stopped_at, followups, str(run_log), followups_path)
     if problems:
         msg += "\n\nWARNING — parent checkout changed unexpectedly:\n" + "\n".join(f"  - {p}" for p in problems)
-    endrun.run_notify(cfg.notify, msg)
+    if cfg.notify == "telegram":
+        notify_telegram.send(cfg, repo, msg)
+    else:
+        endrun.run_notify(cfg.notify, msg)

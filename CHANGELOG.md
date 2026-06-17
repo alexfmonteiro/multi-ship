@@ -6,6 +6,18 @@ All notable changes to multi-ship will be documented in this file.
 
 ### Added
 
+- **Built-in Telegram notification backend.** Set `"notify": "telegram"` in
+  `.claude/multi-ship.json` to receive end-of-run summaries via a Telegram bot
+  with no extra packages — the backend is stdlib-only (`urllib`, `pathlib`).
+  Credentials are read from `os.environ` first, then a repo-local `.env` fallback
+  (per-variable, so you can mix). Missing credentials or network errors are caught
+  fail-soft (one stderr line, run exits 0). Long messages are truncated to
+  Telegram's 4096-char limit with an ellipsis marker. Configure via an optional
+  `notify_telegram` block (`bot_token_env`, `chat_id_env`, `env_file`; all
+  default to conventional names so zero config is needed for the common case).
+  The previous shell-command path (`any other string` → stdin pipe) and the
+  no-op (`"none"` / `""`) are unchanged.
+
 - **`multi-ship status`** — print the current run's per-item table (shipped /
   awaiting / needs-fix / failed / pending) with PR refs and the judge's reason,
   read from `.multi-ship/run-log.json`. Colorized on a TTY.

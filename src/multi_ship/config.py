@@ -1,7 +1,7 @@
 """Load + validate a project's .claude/multi-ship.json."""
 from __future__ import annotations
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 class ConfigError(Exception):
@@ -25,6 +25,7 @@ class Config:
     build_invariants: str
     smoke_instructions: str
     roles: dict
+    notify_telegram: dict = field(default_factory=dict)
 
 def load_config(path: Path) -> Config:
     path = Path(path)
@@ -47,4 +48,7 @@ def load_config(path: Path) -> Config:
         raise ConfigError("roles.judges must be a non-empty list")
     if not isinstance(roles["coder"], dict) or "hard" not in roles["coder"] or "routine" not in roles["coder"]:
         raise ConfigError("roles.coder must have 'hard' and 'routine'")
-    return Config(**{k: data[k] for k in _REQUIRED_KEYS})
+    kwargs = {k: data[k] for k in _REQUIRED_KEYS}
+    if "notify_telegram" in data:
+        kwargs["notify_telegram"] = data["notify_telegram"]
+    return Config(**kwargs)

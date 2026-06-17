@@ -136,6 +136,84 @@ def test_fix_prompt_neutralizes_quotes_and_newlines():
     assert p.count('"') == 2  # only the wrapping quotes remain
 
 
+# ---------------------------------------------------------------------------
+# STEP 11 / STEP 12: dispatch routing — telegram vs shell vs none
+# ---------------------------------------------------------------------------
+
+def _cfg_notify(notify_value):
+    """Helper: build a Config with a custom notify value."""
+    return cfgmod.Config(
+        build_workflow="mmb", spec_glob="docs/specs/*.md", verify="true",
+        notify=notify_value, pr_body_convention="Closes #{issue}",
+        complete_cmd="/complete-spec {slug}", test_cmd="true",
+        build_invariants="x", smoke_instructions="y",
+        roles={"scout": "haiku", "reader": "haiku", "planner": "opus",
+               "judges": ["opus"], "coder": {"hard": "opus", "routine": "sonnet"},
+               "verifier": "opus"},
+        notify_telegram={},
+    )
+
+
+def _setup_end_of_run_state(tmp_path):
+    """Create minimal state for _end_of_run: state dir, HANDOFF.md, run-log.json."""
+    from multi_ship import runlog
+    state = tmp_path / ".multi-ship"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "HANDOFF.md").write_text("# HANDOFF\n")
+    rl = state / "run-log.json"
+    runlog.init_run_log(rl, order=[], stop_on_failure=True, notification_surface="none")
+    return state
+
+
+def test_dispatch_telegram_calls_send_not_run_notify(tmp_path, monkeypatch):
+    """With cfg.notify=='telegram', notify_telegram.send is called; run_notify is NOT."""
+    from multi_ship import endrun, notify_telegram
+
+    send_calls = []
+    run_notify_calls = []
+    monkeypatch.setattr(notify_telegram, "send", lambda cfg, repo, msg: send_calls.append(msg))
+    monkeypatch.setattr(endrun, "run_notify", lambda cmd, msg: run_notify_calls.append(msg))
+
+    state = _setup_end_of_run_state(tmp_path)
+    cfg = _cfg_notify("telegram")
+    driver._end_of_run(str(tmp_path), cfg, state, state / "run-log.json", [], None, {})
+
+    assert len(send_calls) == 1
+    assert len(run_notify_calls) == 0
+
+
+def test_dispatch_other_string_calls_run_notify_not_send(tmp_path, monkeypatch):
+    """With cfg.notify=='true' (any non-telegram string), run_notify IS called; send NOT."""
+    from multi_ship import endrun, notify_telegram
+
+    send_calls = []
+    run_notify_calls = []
+    monkeypatch.setattr(notify_telegram, "send", lambda cfg, repo, msg: send_calls.append(msg))
+    monkeypatch.setattr(endrun, "run_notify", lambda cmd, msg: run_notify_calls.append(msg))
+
+    state = _setup_end_of_run_state(tmp_path)
+    cfg = _cfg_notify("true")
+    driver._end_of_run(str(tmp_path), cfg, state, state / "run-log.json", [], None, {})
+
+    assert len(send_calls) == 0
+    assert len(run_notify_calls) == 1
+
+
+def test_dispatch_none_no_telegram(tmp_path, monkeypatch):
+    """With cfg.notify=='none', send NOT called (shell path handles no-op)."""
+    from multi_ship import endrun, notify_telegram
+
+    send_calls = []
+    monkeypatch.setattr(notify_telegram, "send", lambda cfg, repo, msg: send_calls.append(msg))
+    # Let run_notify run normally (it's a no-op for 'none')
+
+    state = _setup_end_of_run_state(tmp_path)
+    cfg = _cfg_notify("none")
+    driver._end_of_run(str(tmp_path), cfg, state, state / "run-log.json", [], None, {})
+
+    assert len(send_calls) == 0
+
+
 def test_item_id_uses_filename_not_full_path(tmp_path, monkeypatch):
     # Regression: a spec under docs/specs/ must key state files by FILENAME
     # (item-x.md.json), not the full path (item-docs/specs/x.md.json → nested,

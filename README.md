@@ -197,13 +197,37 @@ Actions instead of tying up your laptop — see
 | `build_workflow` | Name of the Claude Code workflow that does the build (default: `"mixed-model-burst"`). Must be present in `.claude/workflows/`. | — |
 | `spec_glob` | Glob used when `multi-ship` is invoked without explicit spec paths (e.g. `"docs/specs/*.md"`). | — |
 | `verify` | Shell command to cold-verify CI for a PR. Run after every push; must block until all checks complete. | `$PR` → PR number (bare integer) |
-| `notify` | Shell command to send the end-of-run summary to the operator. Default template uses `echo`; replace with a Telegram/Slack notifier. | Message text is passed as the first argument. |
+| `notify` | How to deliver the end-of-run summary. Three routings: `"telegram"` — built-in stdlib Telegram bot (reads credentials from env / `.env`, no extra packages); `"none"` or `""` — no-op; any other string — treated as a shell command with the message passed on stdin (e.g. `"cat"`, `"jq -r '.'"`, a custom webhook script). | For the shell path, message text is piped to stdin. |
+| `notify_telegram` | _(optional)_ Config block used only when `notify == "telegram"`. See table below. | — |
 | `pr_body_convention` | Template for the PR body's closing keyword line (e.g. `"Closes #{issue}"`). | `{issue}` → issue number extracted from the spec's `Issue:` frontmatter |
 | `complete_cmd` | Claude Code skill invocation run after each successful merge for bookkeeping (e.g. `"/complete-spec {slug}"`). Runs as a fresh `claude -p`. | `{slug}` → spec filename stem (e.g. `P15` from `P15.md`) |
 | `test_cmd` | Project test command passed into the build workflow (e.g. `"pytest -x"`). | — |
 | `build_invariants` | One paragraph of project conventions (TDD rules, architecture constraints, etc.) injected into the build workflow prompt. | — |
 | `smoke_instructions` | Recipe for the post-build smoke test injected into the build workflow. | — |
 | `roles` | Role-to-model map (see below). | — |
+
+### The `notify_telegram` block
+
+Only consulted when `notify == "telegram"`. All keys are optional (shown with defaults):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `bot_token_env` | `"TELEGRAM_BOT_TOKEN"` | Name of the env var (or `.env` key) holding the bot token |
+| `chat_id_env` | `"TELEGRAM_CHAT_ID"` | Name of the env var (or `.env` key) holding the chat / group id |
+| `env_file` | `".env"` | Path relative to the repo root for the fallback dotenv file |
+
+Credential lookup order per variable: `os.environ` first, then the dotenv file. If either credential is still missing, the notification is skipped with one line to stderr (never crashes the run). The bot token is never logged.
+
+```json
+"notify": "telegram",
+"notify_telegram": {
+  "bot_token_env": "TELEGRAM_BOT_TOKEN",
+  "chat_id_env": "TELEGRAM_CHAT_ID",
+  "env_file": ".env"
+}
+```
+
+> **Stdlib-only.** The Telegram backend uses only `urllib` and `pathlib` — no `python-telegram-bot`, `requests`, or any extra package. `pyproject.toml dependencies` stays `[]`.
 
 ### The role→model map
 
