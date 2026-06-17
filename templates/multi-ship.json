@@ -2,7 +2,14 @@
   "build_workflow": "mixed-model-burst",
   "spec_glob": "docs/specs/*.md",
   "verify": "gh pr checks $PR --watch",
-  "notify": "echo NOTIFY:",
+
+  "notify": "telegram",
+  "notify_telegram": {
+    "bot_token_env": "TELEGRAM_BOT_TOKEN",
+    "chat_id_env": "TELEGRAM_CHAT_ID",
+    "env_file": ".env"
+  },
+
   "pr_body_convention": "Closes #{issue}",
   "complete_cmd": "/complete-spec {slug}",
   "test_cmd": "<your project's test command, e.g. pytest -x>",

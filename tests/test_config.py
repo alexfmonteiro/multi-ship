@@ -51,3 +51,38 @@ def test_bad_json_raises(tmp_path):
     p.write_text("{not json")
     with pytest.raises(ConfigError, match="invalid JSON"):
         load_config(p)
+
+
+# ---------------------------------------------------------------------------
+# STEP 9 / STEP 10: optional notify_telegram field
+# ---------------------------------------------------------------------------
+
+def test_config_without_notify_telegram_defaults_to_empty_dict(tmp_path):
+    """A config that omits notify_telegram must still load and expose {} default."""
+    cfg = load_config(_write(tmp_path, REQUIRED))
+    assert cfg.notify_telegram == {}
+
+
+def test_config_with_notify_telegram_parses_dict(tmp_path):
+    """A config WITH notify_telegram dict is available on cfg.notify_telegram."""
+    data = dict(REQUIRED)
+    data["notify_telegram"] = {
+        "bot_token_env": "MY_BOT_TOKEN",
+        "chat_id_env": "MY_CHAT_ID",
+        "env_file": ".secrets",
+    }
+    cfg = load_config(_write(tmp_path, data))
+    assert cfg.notify_telegram == {
+        "bot_token_env": "MY_BOT_TOKEN",
+        "chat_id_env": "MY_CHAT_ID",
+        "env_file": ".secrets",
+    }
+
+
+def test_notify_telegram_not_in_required_keys(tmp_path):
+    """notify_telegram must NOT be in _REQUIRED_KEYS — omitting it must not raise."""
+    from multi_ship.config import _REQUIRED_KEYS
+    assert "notify_telegram" not in _REQUIRED_KEYS
+    # omitting it should not raise ConfigError
+    cfg = load_config(_write(tmp_path, REQUIRED))
+    assert hasattr(cfg, "notify_telegram")
