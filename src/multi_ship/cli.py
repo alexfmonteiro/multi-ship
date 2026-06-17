@@ -127,6 +127,34 @@ def cmd_status(repo: str) -> int:
     print(format_status(log, str(Path(repo).resolve()), color=sys.stdout.isatty()))
     return 0
 
+def cmd_preflight(repo: str, tokens: list[str]) -> int:
+    """Lint resolved specs for readiness gaps before an unattended run. Exit 0 if
+    all clear, 2 if any spec needs attention, 1 on a resolution error."""
+    from . import preflight as pf
+    repo_p = Path(repo).resolve()
+    cfg = load_config(repo_p / ".claude" / "multi-ship.json")
+    args = argparse.Namespace(specs=tokens, issue=None)
+    try:
+        specs = _resolve_specs(args, cfg, repo_p)
+    except ResolveError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not specs:
+        print("no specs to check", file=sys.stderr)
+        return 1
+    problems = pf.lint_specs([repo_p / s for s in specs])
+    if not problems:
+        print(f"preflight OK — {len(specs)} spec(s) ready")
+        return 0
+    for path, probs in problems.items():
+        rel = Path(path).relative_to(repo_p) if str(path).startswith(str(repo_p)) else path
+        print(f"⚠ {rel}")
+        for pr in probs:
+            print(f"    - {pr}")
+    print(f"\n{len(problems)} of {len(specs)} spec(s) need attention before an "
+          "unattended run.", file=sys.stderr)
+    return 2
+
 def _resolve_specs(args, cfg, repo: Path) -> list[str]:
     """Resolve spec tokens and --issue integers to repo-relative paths.
 
@@ -169,6 +197,14 @@ def main(argv=None) -> int:
         elif rest and not rest[0].startswith("-"):
             repo = rest[0]
         return cmd_status(repo)
+    if argv and argv[0] == "preflight":
+        rest = argv[1:]
+        repo = "."
+        if "--repo" in rest:
+            i = rest.index("--repo")
+            repo = rest[i + 1]
+            rest = rest[:i] + rest[i + 2:]
+        return cmd_preflight(repo, rest)
 
     p = argparse.ArgumentParser(prog="multi-ship")
     p.add_argument("specs", nargs="*")
