@@ -1,13 +1,43 @@
-"""multi-ship CLI: run a backlog, or `init` a repo."""
+"""multi-ship CLI: run a backlog, `init` a repo, or `install-skills`."""
 from __future__ import annotations
 import argparse
 import glob
+import os
 import shutil
 import sys
 from pathlib import Path
 
 from . import driver
 from .config import load_config
+
+# Repo/package root: src/multi_ship/cli.py -> parents[2]. Works from a source
+# checkout and from an editable install (both point back at the project tree).
+PKG_ROOT = Path(__file__).resolve().parents[2]
+
+def cmd_install_skills(copy: bool = False) -> int:
+    """Link (or copy) the bundled skills into ~/.claude/skills and put the
+    `multi-ship` console script on notice. Mirrors install.sh so a pip/pipx
+    install needs no second clone. Idempotent; refuses to clobber a real file."""
+    src = PKG_ROOT / "skills"
+    if not src.is_dir():
+        print(f"bundled skills not found at {src}", file=sys.stderr)
+        return 1
+    dst_root = Path(os.path.expanduser("~/.claude/skills"))
+    dst_root.mkdir(parents=True, exist_ok=True)
+    for d in sorted(p for p in src.iterdir() if p.is_dir()):
+        dst = dst_root / d.name
+        if dst.exists() and not dst.is_symlink():
+            print(f"SKIP {d.name}: a non-symlink skill already exists at {dst}")
+            continue
+        if dst.is_symlink() or dst.exists():
+            dst.unlink()
+        if copy:
+            shutil.copytree(d, dst)
+        else:
+            dst.symlink_to(d, target_is_directory=True)
+        print(f"{'copied' if copy else 'linked'} skill: {d.name}")
+    print("done. Per-repo setup: cd <repo> && multi-ship init")
+    return 0
 
 def cmd_init(repo: str, template_path: Path) -> None:
     repo = Path(repo)
@@ -32,15 +62,16 @@ def _resolve_specs(args, cfg) -> list[str]:
 
 def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
-    pkg_root = Path(__file__).resolve().parent.parent.parent
 
-    # `init` is handled before argparse: a subparser would capture the first
-    # positional, breaking the primary `multi-ship <specs...>` form.
+    # Subcommands are handled before argparse: a subparser would capture the
+    # first positional, breaking the primary `multi-ship <specs...>` form.
     if argv and argv[0] == "init":
         repo = argv[1] if len(argv) > 1 and not argv[1].startswith("-") else "."
-        cmd_init(repo, template_path=pkg_root / "templates" / "multi-ship.json")
+        cmd_init(repo, template_path=PKG_ROOT / "templates" / "multi-ship.json")
         print(f"initialized {repo}/.claude/multi-ship.json")
         return 0
+    if argv and argv[0] == "install-skills":
+        return cmd_install_skills(copy="--copy" in argv[1:])
 
     p = argparse.ArgumentParser(prog="multi-ship")
     p.add_argument("specs", nargs="*")
