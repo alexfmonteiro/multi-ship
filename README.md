@@ -1,92 +1,96 @@
 # multi-ship
 
-Ship a backlog of specs autonomously, one fresh context per item.
+**Ship a backlog of specs autonomously on Claude Code — one fresh context per item.**
 
----
+[![CI](https://github.com/alexfmonteiro/multi-ship/actions/workflows/test.yml/badge.svg)](https://github.com/alexfmonteiro/multi-ship/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 
-## Why
-
-Long autonomous sessions accumulate context. After N work items the session is
-bloated, carries stale reasoning from earlier items, and a crash wipes all
-progress. Claude Code makes this worse in one specific way: **a session cannot
-clear or compact its own context** — `/clear` and `/compact` are user-only
+Long autonomous Claude Code sessions rot. After a handful of work items the
+session is bloated, drags stale reasoning from earlier items into new ones, and
+a single crash wipes all progress. And here's the catch: **a Claude Code session
+cannot clear or compact its own context.** `/clear` and `/compact` are user-only
 gestures; hooks can't spawn sessions; `--resume` and `--continue` reuse the old
-history. The only guaranteed reset without forking the harness is a fresh
-`claude -p` invocation.
+history. The only guaranteed reset is a fresh `claude -p` invocation.
 
-The fix is to invert the architecture: move the loop out of the Claude session
-into a thin Python driver, give each work item its own `claude -p` (fresh
-context, clean slate), and keep all cross-item memory on disk in a fixed-schema
-handoff doc. The driver is dumb — it routes only on status/verdict files, never
-reasons about code. Every decision that requires judgment is a fresh cold
-`claude -p`.
+**multi-ship inverts the loop.** It moves orchestration out of the Claude session
+into a thin Python driver and gives **every work item its own `claude -p` — a
+clean slate, like an automatic `/clear` between items.** Cross-item memory lives
+on disk in a fixed-schema handoff doc. Before each merge, an independent **cold
+judge** (a separate `claude -p` that sees only the spec's Definition of Done and
+the PR diff) decides whether the work actually shipped. The driver is dumb — it
+routes only on status/verdict files and never reasons about code. Every decision
+that needs judgment is a fresh, cold model call.
 
----
+```text
+multi-ship docs/specs/*.md
+  └─ for each spec, in order:
+       fresh claude -p  →  build in a worktree  →  open PR  →  drive CI to green
+       fresh COLD claude -p judge  →  reads only spec DoD + PR diff  →  {ok, reason}
+       driver merges (squash) only when the judge says ok  →  next item, clean context
+```
 
-## Portability notice — "the patterns are portable; this implementation is not"
-
-The orchestration ideas that make multi-ship work were shaped by Xiaomi's
-[MiMo Code](https://github.com/XiaomiMiMo/MiMo) (a fork of OpenCode). MiMo
-solves the same long-horizon problem by keeping one long-lived session and
-managing it carefully: checkpoint-reconstruct, cold-judge stop-gates, and
-`/dream` offline consolidation. We can't replicate the intra-session management
-because we don't own the harness — but three of their ideas live *above* the
-harness and port cleanly:
-
-- **Fixed-schema handoff doc** (their 11-section `checkpoint.md`) → our
-  `HANDOFF.md`, trimmed to cross-item sections only.
-- **Cold-judge stop-gate** (their `/goal` + independent judge) → our
-  `judge-shipped` skill.
-- **Offline consolidation** (their `/dream`) → our `dream-run` skill.
-
-**This implementation runs on Claude Code.** The driver shells `claude -p` and
-uses Claude Code's skill and workflow engine. The model-role map is
-parametrized (you can override which Claude tier fills each role) and the
-`resolveModel` seam in the bundled workflow is the slot where a future
-cross-vendor provider layer would live — but **true cross-vendor support
-(GPT-4o, Gemini, local models) is not implemented today**. It is a documented
-future direction. If you need vendor-agnostic orchestration now, the patterns
-here are the portable part; the implementation is Claude-Code-specific.
+> **Demo:** _(asciinema cast coming — see [docs/demo.md](docs/demo.md) to record one)._
 
 ---
 
-## Requirements
+## Is this for me?
+
+multi-ship is a sharp tool for a specific workflow. It's a strong fit if:
+
+- ✅ You break work into **independent specs / plans** and have a backlog of them.
+- ✅ You run Claude Code **unattended** and want it to ship PRs end-to-end (build →
+  PR → green CI → merge) without babysitting each one.
+- ✅ You're on **macOS or Linux**, with `claude` and the GitHub CLI (`gh`)
+  authenticated.
+- ✅ You want a **safety gate**: nothing merges red, and an independent cold judge
+  must approve each PR before merge.
+
+It's probably **not** for you if you work interactively item-by-item, don't write
+specs, or need vendor-agnostic orchestration today (this runs on Claude Code — see
+[Prior art & honesty](#prior-art--honesty)).
+
+---
+
+## Quickstart
+
+```bash
+# 1. install the CLI + skills (macOS or Linux)
+git clone https://github.com/alexfmonteiro/multi-ship.git
+cd multi-ship
+pip install -e .          # puts the `multi-ship` command on PATH
+multi-ship install-skills # links the skills into ~/.claude/skills
+
+# 2. set up a repo you own
+cd /path/to/your-repo
+multi-ship init           # scaffolds .claude/multi-ship.json + gitignores .multi-ship/
+# …edit .claude/multi-ship.json: set verify, test_cmd, notify…
+
+# 3. prove it on one trivial spec, then ship the backlog
+cp /path/to/multi-ship/examples/specs/add-greeting.md docs/specs/
+multi-ship docs/specs/add-greeting.md     # watch it open + merge one real PR
+multi-ship docs/specs/*.md                # then the whole backlog
+```
+
+New here? [`examples/`](examples/) ships a 2-minute "first PR" walkthrough.
+
+`install-skills` symlinks each skill so a `git pull` keeps them current (pass
+`--copy` to copy instead). The old `./install.sh` path still works and is handy
+for dev checkouts.
+
+### Requirements
 
 | Tool | Notes |
 |---|---|
 | [`claude`](https://claude.ai/code) | Claude Code on PATH; must be authenticated |
 | [`gh`](https://cli.github.com/) | GitHub CLI, authenticated (`gh auth login`) |
 | `python3` | 3.9 or newer |
-| `caffeinate` | macOS built-in; the driver uses it to prevent sleep during a run. Non-macOS users need to adapt `driver.py` (`_caffeinate` / `_kill_caffeinate`). |
-
----
-
-## Install
-
-```bash
-git clone https://github.com/alexfmonteiro/multi-ship.git ~/Projects/multi-ship
-cd ~/Projects/multi-ship && ./install.sh
-```
-
-`install.sh` does the following (idempotent, safe to re-run):
-
-- Symlinks each directory under `skills/` into `~/.claude/skills/`. Because
-  these are symlinks, a `git pull` in the repo updates the skills automatically.
-- Creates a symlink `~/.local/bin/multi-ship → bin/multi-ship`.
-- If `~/.local/bin` is not on your `PATH`, the installer prints the `export`
-  line you need to add to your shell profile.
-- Checks that `python3`, `claude`, and `gh` are on PATH; warns (does not abort)
-  if any are missing.
-- **Refuses to clobber** a pre-existing non-symlink skill of the same name —
-  it prints `SKIP <name>: a non-symlink skill already exists` and leaves your
-  file untouched. Remove it manually first if you want the multi-ship version.
+| sleep inhibitor | Optional. macOS uses `caffeinate`; Linux uses `systemd-inhibit` automatically. Neither present → the run just isn't sleep-protected. |
 
 ### Uninstall
 
-Remove the symlinks:
-
 ```bash
-rm ~/.local/bin/multi-ship
+pip uninstall multi-ship
 rm -rf ~/.claude/skills/ship-one ~/.claude/skills/judge-shipped \
        ~/.claude/skills/dream-run ~/.claude/skills/autonomous-session \
        ~/.claude/skills/autonomous-multi-ship
@@ -94,18 +98,61 @@ rm -rf ~/.claude/skills/ship-one ~/.claude/skills/judge-shipped \
 
 ---
 
-## Per-repo setup
+## Safety & blast radius
 
-Run once in each repository you want to use multi-ship with:
+multi-ship runs Claude **unattended with elevated permissions** — be deliberate
+about where you point it.
+
+- **`bypassPermissions`.** The inner `claude -p` sessions run with
+  `--permission-mode bypassPermissions`: they read, modify, and commit code with
+  no confirmation prompts. **Only point multi-ship at repos you own and trust.**
+- **The cold judge is the guardrail.** Nothing merges that the independent judge
+  rejected, and nothing merges red — `verify` must block until all checks
+  complete. The judge sees only the spec DoD + PR diff + CI status, never the
+  builder's transcript, so it can't be talked into approving by the same context
+  that wrote the code.
+- **One fix-retry, then stop.** A rejected item gets exactly one fix attempt and
+  re-judge. A second rejection stops the run (or skips the item with
+  `--continue-on-failure`). Nothing half-shipped is left merged.
+- **Fail-closed on build/CI, fail-open on the judge.** A flaky judge can't trap a
+  good run; a red build can't sneak through.
+- **Your working tree is respected.** The driver snapshots dirty parent state at
+  start and stops + notifies if it changes unexpectedly — it never reverts,
+  renames, or deletes your uncommitted work.
+
+---
+
+## Usage
+
+Ship specific specs (run in the order given):
 
 ```bash
-cd <your-repo>
-multi-ship init
+multi-ship docs/specs/P15.md docs/specs/P16.md
 ```
 
-This scaffolds `.claude/multi-ship.json` from the template and appends
-`.multi-ship/` to `.gitignore`. The config file is committed; the state
-directory is not.
+Ship everything matching the config glob:
+
+```bash
+multi-ship
+```
+
+Flags:
+
+| Flag | Meaning |
+|---|---|
+| `--continue-on-failure` | Keep processing remaining specs when an item fails (default: stop at the first failure) |
+| `--resume` | Skip specs already `shipped` in the run-log; restart at the first non-shipped item |
+| `--repo <path>` | Repo root (default: current working directory) |
+
+Subcommands:
+
+| Subcommand | Meaning |
+|---|---|
+| `multi-ship init [repo]` | Scaffold `.claude/multi-ship.json` and add `.multi-ship/` to `.gitignore`. `repo` defaults to `.` |
+| `multi-ship install-skills [--copy]` | Link (or copy) the bundled skills into `~/.claude/skills` |
+
+Specs run in the order you give them (or in glob sort order). The driver does not
+reorder them.
 
 ---
 
@@ -124,14 +171,12 @@ directory is not.
 | `test_cmd` | Project test command passed into the build workflow (e.g. `"pytest -x"`). | — |
 | `build_invariants` | One paragraph of project conventions (TDD rules, architecture constraints, etc.) injected into the build workflow prompt. | — |
 | `smoke_instructions` | Recipe for the post-build smoke test injected into the build workflow. | — |
-| `roles` | Role-to-model map (see section below). | — |
+| `roles` | Role-to-model map (see below). | — |
 
----
+### The role→model map
 
-## The role→model map
-
-The `roles` object in the config controls which Claude tier fills each role in
-the `mixed-model-burst` build workflow. The defaults match the template:
+The `roles` object controls which Claude tier fills each role in the
+`mixed-model-burst` build workflow. Defaults match the template:
 
 ```json
 "roles": {
@@ -154,50 +199,17 @@ the `mixed-model-burst` build workflow. The defaults match the template:
 | `coder.routine` | sonnet | Used when the spec difficulty is `routine` |
 | `verifier` | opus | Adversarial post-build verification before the ship-tail |
 
-Override any role by changing its value in your repo's config. The
-`resolveModel(role, difficulty)` seam in the workflow reads from this map
-exclusively — no model IDs are hardcoded in the workflow logic.
-
----
-
-## Usage
-
-Ship specific specs (run in order as given):
-
-```bash
-multi-ship docs/specs/P15.md docs/specs/P16.md
-```
-
-Ship everything matching the config glob:
-
-```bash
-multi-ship
-```
-
-Flags:
-
-| Flag | Meaning |
-|---|---|
-| `--continue-on-failure` | Keep processing remaining specs when an item fails (default: stop at the first failure) |
-| `--resume` | Skip specs whose status is already `shipped` in the run-log; restart at the first non-shipped item |
-| `--repo <path>` | Repo root (default: current working directory) |
-
-Subcommands:
-
-| Subcommand | Meaning |
-|---|---|
-| `multi-ship init [repo]` | Scaffold `.claude/multi-ship.json` and add `.multi-ship/` to `.gitignore`. `repo` defaults to `.` |
-
-Specs run in the order you give them (or in glob sort order). The driver does
-not reorder them.
+Override any role in your repo's config. The `resolveModel(role, difficulty)`
+seam in the workflow reads from this map exclusively — no model IDs are hardcoded
+in the workflow logic.
 
 ---
 
 ## How it works
 
-```
+```text
 multi-ship <specs...>  →  driver:
-  caffeinate; load .claude/multi-ship.json
+  stay-awake (caffeinate / systemd-inhibit); load .claude/multi-ship.json
   init run-log (fail-closed, before item 1) + empty HANDOFF.md
 
   for spec in order:
@@ -229,7 +241,7 @@ multi-ship <specs...>  →  driver:
       claude -p "/dream-run"  → writes dream-proposals.md
     consolidate follow-up items → .multi-ship/followups.md
     notify operator (items shipped, follow-up paths, per-item checklist)
-    kill caffeinate; exit
+    release stay-awake; exit
 ```
 
 ### The four skills
@@ -256,74 +268,56 @@ All per-run state lives in `.multi-ship/` at the repo root (gitignored):
 | `dream-proposals.md` | Proposed CLAUDE.md and memory additions from `dream-run`. Operator-reviewed; never auto-applied. |
 | `followups.md` | Follow-up items collected from all item reports at end-of-run. |
 
-`--resume` reads `run-log.json`, skips items with `status: shipped`, and
-restarts at the first item that is not yet shipped. It does not clear or
-rewrite existing artifacts.
+`--resume` reads `run-log.json`, skips items with `status: shipped`, and restarts
+at the first item that is not yet shipped. It does not clear or rewrite existing
+artifacts.
 
 ---
 
-## Worked example config
+## Prior art & honesty
 
-A filled-in `.claude/multi-ship.json` for a typical Python project using
-pytest, `gh`, and a Telegram notifier:
+The orchestration ideas behind multi-ship were shaped by Xiaomi's
+[MiMo Code](https://github.com/XiaomiMiMo/MiMo) (a fork of OpenCode), which solves
+the same long-horizon problem by keeping one long-lived session and managing it
+carefully: checkpoint-reconstruct, cold-judge stop-gates, and `/dream` offline
+consolidation. We can't replicate the *intra-session* management because we don't
+own the harness — but three of their ideas live *above* the harness and port
+cleanly:
 
-```json
-{
-  "build_workflow": "mixed-model-burst",
-  "spec_glob": "docs/specs/*.md",
-  "verify": "gh pr checks $PR --watch",
-  "notify": "python3 scripts/notify.py",
-  "pr_body_convention": "Closes #{issue}",
-  "complete_cmd": "/complete-spec {slug}",
-  "test_cmd": "uv run ruff check . && uv run mypy . && uv run pytest -x",
-  "build_invariants": "TDD: write the test first. All Pydantic models in api/models.py. No hardcoded credentials. Migrations in migrations/ only — no runtime CREATE TABLE.",
-  "smoke_instructions": "After tests pass, run: python -c \"from myapp.config import load_config; cfg = load_config(); print('OK')\"",
-  "roles": {
-    "scout":   "haiku",
-    "reader":  "haiku",
-    "planner": "opus",
-    "judges":  ["opus", "sonnet", "haiku"],
-    "coder":   { "hard": "opus", "routine": "sonnet" },
-    "verifier": "opus"
-  }
-}
-```
+- **Fixed-schema handoff doc** (their 11-section `checkpoint.md`) → our `HANDOFF.md`.
+- **Cold-judge stop-gate** (their `/goal` + independent judge) → our `judge-shipped`.
+- **Offline consolidation** (their `/dream`) → our `dream-run`.
 
-`notify` receives the run summary as its first positional argument; adapt it to
-call your notifier script, `curl` a webhook, or `pbcopy` to clipboard.
+**The honest part:** *the patterns are portable; this implementation is not.* The
+driver shells `claude -p` and uses Claude Code's skill and workflow engine. The
+role→model map is parametrized and the `resolveModel` seam is where a future
+cross-vendor provider layer would slot in — but **true cross-vendor support
+(GPT, Gemini, local models) is not implemented today.** It's a documented future
+direction. If you need vendor-agnostic orchestration now, the patterns here are
+the portable part; the implementation is Claude-Code-specific.
+
+See [DESIGN.md](DESIGN.md) for the full rationale.
 
 ---
 
 ## Limitations
 
-- **Claude Code only.** The driver shells `claude -p`; the skills are Claude
-  Code skill files; the build workflow uses Claude Code's `Workflow()` and
-  `agent()` APIs. Running against GPT-4o, Gemini, or local models is not
-  supported today. The `resolveModel` seam in the workflow is where that layer
-  would slot in, but the provider implementation is deferred.
-
-- **macOS `caffeinate`.** The driver calls `caffeinate -dimsu` to prevent sleep
-  during long runs. On Linux or Windows you need to adapt `driver.py`'s
-  `_caffeinate` / `_kill_caffeinate` functions (a no-op stub is safe if you
-  keep the machine awake yourself).
-
-- **`gh` required.** PR creation, CI watching, and merging are all `gh` CLI
-  calls. The driver has no GitHub API fallback.
-
-- **Sequential, not parallel.** Specs run one at a time in order. Parallelism
-  within a run is not implemented; specs are independent by design, but the
-  driver serializes them.
-
-- **Elevated permissions.** The inner `claude -p` sessions run unattended with
-  `--permission-mode bypassPermissions`. Only point multi-ship at repos you
-  own and trust — it will read, modify, and commit code without confirmation
-  prompts.
-
-- **One fix-retry per item.** If the judge rejects, `ship-one` gets one chance
-  to fix and re-pass the judge. A second rejection stops the run (or skips the
-  item with `--continue-on-failure`).
+- **Claude Code only.** The driver shells `claude -p`; the skills are Claude Code
+  skill files; the build workflow uses Claude Code's `Workflow()`/`agent()` APIs.
+  Running against GPT, Gemini, or local models is not supported today.
+- **`gh` required.** PR creation, CI watching, and merging are all `gh` CLI calls.
+  No GitHub API fallback.
+- **Sequential, not parallel.** Specs run one at a time, in order. Within-run
+  parallelism is not implemented (specs are independent by design, but serialized).
+- **One fix-retry per item.** A judge rejection gets one fix attempt, then stops
+  (or skips with `--continue-on-failure`).
 
 ---
+
+## Contributing
+
+Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Good first issues
+are labeled [`good first issue`](https://github.com/alexfmonteiro/multi-ship/labels/good%20first%20issue).
 
 ## License
 

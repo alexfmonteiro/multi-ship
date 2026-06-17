@@ -1,0 +1,19 @@
+{
+  "build_workflow": "mixed-model-burst",
+  "spec_glob": "docs/specs/*.md",
+  "verify": "gh pr checks $PR --watch",
+  "notify": "echo NOTIFY:",
+  "pr_body_convention": "Closes #{issue}",
+  "complete_cmd": "/complete-spec {slug}",
+  "test_cmd": "pytest -x",
+  "build_invariants": "TDD: write the failing test first. Keep helpers pure and dependency-free. Match the surrounding code style. No hardcoded secrets.",
+  "smoke_instructions": "After tests pass, run: python -c \"from your_package import greeting; assert greeting('world') == 'Hello, world!'; print('OK')\"",
+  "roles": {
+    "scout": "haiku",
+    "reader": "haiku",
+    "planner": "opus",
+    "judges": ["opus", "sonnet", "haiku"],
+    "coder": { "hard": "opus", "routine": "sonnet" },
+    "verifier": "opus"
+  }
+}

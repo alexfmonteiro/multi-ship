@@ -1,17 +1,39 @@
 """The orchestration loop. Dumb: routes only on item/verdict JSON files."""
 from __future__ import annotations
 import json
+import platform
+import shutil
 import subprocess
 from pathlib import Path
 
 from . import claude_cli, runlog, handoff, endrun
 from .config import Config
 
+def _stay_awake_cmd() -> list[str] | None:
+    """Return a long-running command that blocks system sleep on this OS, or
+    None if no inhibitor is available (the run just isn't sleep-protected).
+
+    macOS  -> caffeinate -dimsu
+    Linux  -> systemd-inhibit ... sleep infinity (when systemd is present)
+    other  -> None (no-op)
+    """
+    system = platform.system()
+    if system == "Darwin" and shutil.which("caffeinate"):
+        return ["caffeinate", "-dimsu"]
+    if system == "Linux" and shutil.which("systemd-inhibit"):
+        return ["systemd-inhibit", "--what=idle:sleep:shutdown",
+                "--why=multi-ship run in progress", "--mode=block",
+                "sleep", "infinity"]
+    return None
+
 def _caffeinate():
+    cmd = _stay_awake_cmd()
+    if cmd is None:
+        return None
     try:
-        return subprocess.Popen(["caffeinate", "-dimsu"])
-    except FileNotFoundError:
-        return None  # non-macOS: no-op, the run just isn't sleep-protected
+        return subprocess.Popen(cmd)
+    except (FileNotFoundError, OSError):
+        return None  # inhibitor vanished between probe and spawn: stay fail-soft
 
 def _kill_caffeinate(proc):
     if proc:
