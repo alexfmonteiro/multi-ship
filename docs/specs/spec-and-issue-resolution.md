@@ -41,6 +41,29 @@ After resolution, if a produced path does **not** exist → stop with a clear er
 naming the unresolved reference and exit non-zero. Never start a run against a
 spec file that isn't there.
 
+### Resolved decisions (operator)
+
+These pin down the two questions the plan-panel flagged as open, plus one
+correctness invariant. Treat them as settled requirements:
+
+1. **Repo-relative base — one base for all forms.** The driver runs resolution
+   with `cwd=repo` (`--repo` may differ from the process CWD). The resolver MUST
+   take the resolved `repo` Path and resolve every form against it: glob with
+   `glob.glob(..., root_dir=repo)`, test existence with `(repo / token).exists()`,
+   and derive `<spec_dir>` relative to `repo`. It returns **repo-relative path
+   strings** (e.g. `docs/specs/P14.md`) — never absolutized, never CWD-relative —
+   so `driver._process_item` keying off `Path(sid).name` / `.stem` stays correct.
+2. **Argument order is preserved (input order wins).** The final resolved spec
+   list keeps the order the tokens/`--issue` flags were given on the command line;
+   the driver runs them in that order. A single glob token still expands to its
+   matches in `sorted()` order for determinism, but the overall list is **not**
+   re-sorted — this overrides the legacy `_resolve_specs` `sorted()` behavior.
+3. **Recursive globs are rejected, not silently stripped.** If `cfg.spec_glob`
+   (or a token) contains `**`, deriving `<spec_dir>` via `Path(...).parent` is
+   ambiguous (`specs/**/*.md` → `specs/**`). Do NOT strip the glob prefix —
+   raise a clear error explaining that recursive `**` spec globs are unsupported
+   for `<spec_dir>` derivation, and exit non-zero. A unit test asserts this.
+
 ### Issue → spec resolution
 
 Isolate the GitHub call behind a single mockable seam (a module-level function,
@@ -81,6 +104,7 @@ still falls back to `glob.glob(cfg.spec_glob)`.
 - [ ] An issue that resolves to no existing spec → clear error naming the issue number.
 - [ ] Pure-digit token without `#` is treated as a spec id, not an issue (documented behavior).
 - [ ] The `gh` call is behind a mockable seam; unit tests cover id resolution, issue-title-prefix resolution (gh mocked), issue-body-fallback resolution (gh mocked), glob passthrough, path passthrough, missing-file error, and `spec_dir` derivation from a nested `spec_glob`.
+- [ ] Resolution is rebased on the `repo` Path (glob `root_dir=repo`, `(repo/token).exists()`), returns repo-relative strings, and preserves input argument order (not `sorted()`); a recursive `**` spec glob raises a clear error and exits non-zero. Unit tests cover the `repo != CWD` case, order preservation across mixed-form args, and the `**` rejection.
 - [ ] `CHANGELOG.md` "Unreleased" entry; `README.md` usage section documents id / `#issue` / `--issue` forms.
 
 ## Test plan (TDD order)
@@ -91,6 +115,7 @@ still falls back to `glob.glob(cfg.spec_glob)`.
 4. Issue title-prefix extraction — `[P14] title` → `P14` (pure unit, no gh).
 5. Issue resolution end-to-end — monkeypatch the gh seam to return a title, assert the spec path; then a no-prefix title with a body link.
 6. CLI wiring — `--issue 42` and `#42` both reach the issue path; path/glob still pass through; pure `42` → spec id.
+7. Repo-base + order + `**` — resolve with `repo` set to a tmp tree different from CWD (assert it finds the spec there, returns a repo-relative string); mixed-form args come back in input order, not sorted; a `**` spec glob raises the clear error (red → green).
 
 ## Notes
 
