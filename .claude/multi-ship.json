@@ -1,0 +1,16 @@
+{
+  "build_workflow": "mixed-model-burst",
+  "spec_glob": "docs/specs/*.md",
+  "verify": "gh pr checks $PR --watch",
+  "notify": "cat",
+  "pr_body_convention": "Closes #{issue}",
+  "complete_cmd": "Move docs/specs/{slug}.md to docs/specs/done/{slug}.md (create docs/specs/done/ if needed), then commit that move directly to main with the message 'docs: archive {slug} spec' and push. Do not open a PR for this archival move.",
+  "test_cmd": "PYTHONPATH=src python -m pytest -x",
+  "build_invariants": "Stdlib-only: pyproject.toml dependencies MUST stay [] — no new runtime packages (use urllib, json, pathlib, etc.). TDD: write the failing test in tests/ before implementation. Config is a frozen dataclass in src/multi_ship/config.py; optional new config keys must NOT be added to _REQUIRED_KEYS and must default cleanly so existing configs keep loading. All of src/multi_ship/ is plain importable Python — tests run with PYTHONPATH=src. Fail-soft on external surfaces (network, subprocess, missing files): catch, log one line to stderr, never crash the run. Match the surrounding code style; keep modules small and single-purpose. No secrets in code, config, or committed files — reference them by env-var name only.",
+  "smoke_instructions": "After PYTHONPATH=src pytest -x passes, run a throwaway PYTHONPATH=src python -c (<=30 lines, never checked in) that imports the new module and exercises the new code path end-to-end with urllib/gh mocked or against a tmp tree — e.g. for the telegram backend, call parse_dotenv on a sample string and run the dispatcher with urllib.request.urlopen monkeypatched; for spec/issue resolution, build a tmp docs/specs tree and resolve a bare id + a mocked #issue. Print OK or the first failure.",
+  "roles": {
+    "scout": "haiku", "reader": "haiku", "planner": "opus",
+    "judges": ["opus", "sonnet", "haiku"],
+    "coder": {"hard": "opus", "routine": "sonnet"}, "verifier": "opus"
+  }
+}
