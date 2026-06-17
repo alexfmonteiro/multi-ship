@@ -9,9 +9,16 @@ All notable changes to multi-ship will be documented in this file.
 - **Cross-platform sleep handling.** The driver now auto-detects the OS: macOS
   uses `caffeinate`, Linux uses `systemd-inhibit`, and other platforms no-op
   gracefully. multi-ship is no longer macOS-only.
-- **Standard packaging.** `pyproject.toml` exposes a `multi-ship` console script,
-  so `pip install -e .` (or `pipx`) puts the command on PATH — no manual symlink
-  or PATH export needed.
+- **PyPI-ready packaging (hatchling).** `pyproject.toml` exposes a `multi-ship`
+  console script and the wheel force-includes the skills/templates/workflow, so
+  `pipx install git+…` works with **no clone** — `multi-ship install-skills`
+  wires the skills up afterward. `cli.bundled_dir()` resolves resources from
+  either a source checkout or an installed wheel. See `docs/PUBLISHING.md`.
+- **Claude Code plugin + self-hosted marketplace.** `.claude-plugin/plugin.json`
+  and `.claude-plugin/marketplace.json` let users
+  `/plugin marketplace add alexfmonteiro/multi-ship` and
+  `/plugin install multi-ship@multi-ship`. Passes `claude plugin validate .
+  --strict`.
 - **`multi-ship install-skills [--copy]`** subcommand to link (or copy) the
   bundled skills into `~/.claude/skills`, replacing the need to run `install.sh`
   after a pip install.

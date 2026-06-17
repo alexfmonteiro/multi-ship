@@ -55,28 +55,52 @@ specs, or need vendor-agnostic orchestration today (this runs on Claude Code —
 ## Quickstart
 
 ```bash
-# 1. install the CLI + skills (macOS or Linux)
-git clone https://github.com/alexfmonteiro/multi-ship.git
-cd multi-ship
-pip install -e .          # puts the `multi-ship` command on PATH
-multi-ship install-skills # links the skills into ~/.claude/skills
+# 1. install the CLI + skills (macOS or Linux) — no clone needed
+pipx install git+https://github.com/alexfmonteiro/multi-ship.git
+multi-ship install-skills   # links the skills into ~/.claude/skills
 
 # 2. set up a repo you own
 cd /path/to/your-repo
-multi-ship init           # scaffolds .claude/multi-ship.json + gitignores .multi-ship/
+multi-ship init             # scaffolds .claude/multi-ship.json + gitignores .multi-ship/
 # …edit .claude/multi-ship.json: set verify, test_cmd, notify…
 
 # 3. prove it on one trivial spec, then ship the backlog
-cp /path/to/multi-ship/examples/specs/add-greeting.md docs/specs/
-multi-ship docs/specs/add-greeting.md     # watch it open + merge one real PR
-multi-ship docs/specs/*.md                # then the whole backlog
+mkdir -p docs/specs && curl -fsSL \
+  https://raw.githubusercontent.com/alexfmonteiro/multi-ship/main/examples/specs/add-greeting.md \
+  -o docs/specs/add-greeting.md
+multi-ship docs/specs/add-greeting.md       # watch it open + merge one real PR
+multi-ship docs/specs/*.md                  # then the whole backlog
 ```
 
 New here? [`examples/`](examples/) ships a 2-minute "first PR" walkthrough.
 
-`install-skills` symlinks each skill so a `git pull` keeps them current (pass
-`--copy` to copy instead). The old `./install.sh` path still works and is handy
-for dev checkouts.
+### Install options
+
+| Path | Command | When |
+|---|---|---|
+| **pipx** (recommended) | `pipx install git+https://github.com/alexfmonteiro/multi-ship.git` | Isolated CLI on PATH, no clone. Skills travel in the wheel — `multi-ship install-skills` wires them up. |
+| **pip from a clone** | `git clone … && cd multi-ship && pip install -e . && multi-ship install-skills` | Dev / hacking on multi-ship. `install-skills` symlinks so `git pull` keeps skills current. |
+| **install.sh** | `git clone … && ./install.sh` | The original symlink-everything dev path. Still supported. |
+| **Claude Code plugin** | see [below](#claude-code-plugin) | Browse/install the skills from a marketplace; great for trying the skills interactively. |
+
+> PyPI publish (`pipx install multi-ship`, no `git+`) is queued — the wheel is
+> already PyPI-ready; see [docs/PUBLISHING.md](docs/PUBLISHING.md).
+
+### Claude Code plugin
+
+multi-ship ships as a Claude Code plugin with its own self-hosted marketplace, so
+you can install the skills without touching Python:
+
+```text
+/plugin marketplace add alexfmonteiro/multi-ship
+/plugin install multi-ship@multi-ship
+```
+
+That makes the skills available as `/multi-ship:ship-one`,
+`/multi-ship:autonomous-multi-ship`, etc. **Note:** the autonomous *driver* (the
+`multi-ship` CLI) invokes the skills un-namespaced, so for hands-free backlog runs
+install the CLI (pipx) and run `multi-ship install-skills`. The plugin is the
+discovery + interactive-use path; the CLI is the engine.
 
 ### Requirements
 
