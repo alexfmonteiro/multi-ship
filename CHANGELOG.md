@@ -6,6 +6,12 @@ All notable changes to multi-ship will be documented in this file.
 
 ### Added
 
+- **`multi-ship status`** — print the current run's per-item table (shipped /
+  awaiting / needs-fix / failed / pending) with PR refs and the judge's reason,
+  read from `.multi-ship/run-log.json`. Colorized on a TTY.
+- **GitHub Actions recipe.** `examples/github-actions/` ships a ready-to-copy
+  `workflow_dispatch` workflow (+ safety notes) to run a backlog unattended in CI.
+- **Launch post.** `docs/launch-post.md` — a publish-ready announcement.
 - **Cross-platform sleep handling.** The driver now auto-detects the OS: macOS
   uses `caffeinate`, Linux uses `systemd-inhibit`, and other platforms no-op
   gracefully. multi-ship is no longer macOS-only.
