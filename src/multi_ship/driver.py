@@ -40,6 +40,32 @@ def _kill_caffeinate(proc):
     if proc:
         proc.terminate()
 
+def _cleanup_worktree(branch: str, repo: str):
+    """Remove the build worktree checked out to `branch`, if any. Fail-soft: a
+    cleanup failure (or a missing git) must never crash the run. Parses
+    `git worktree list --porcelain` (blank-line-separated blocks of `worktree
+    <path>` / `branch refs/heads/<name>`)."""
+    if not branch:
+        return
+    try:
+        out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=repo,
+                             capture_output=True, text=True, check=True).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    target, path = f"refs/heads/{branch}", None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line.startswith("branch ") and line[len("branch "):] == target and path:
+            try:
+                subprocess.run(["git", "worktree", "remove", "--force", path], cwd=repo,
+                               check=True, capture_output=True, text=True)
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                stderr = getattr(e, "stderr", "") or ""
+                sys.stderr.write(f"multi-ship: worktree cleanup for {branch} failed "
+                                 f"(non-fatal): {stderr.strip()}\n")
+            return
+
 def _pr_state(pr: str, repo: str) -> str:
     try:
         r = subprocess.run(["gh", "pr", "view", pr, "--json", "state", "-q", ".state"],
@@ -97,9 +123,12 @@ def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
             attempted.add(sid)
             try:
                 ok = _process_item(sid, repo, cfg, state_dir, run_log)
-            except (FileNotFoundError, claude_cli.ClaudeError, runlog.StatusError) as e:
-                # a skill didn't write its file, claude -p failed, or an unexpected
-                # state — fail the item but keep the run alive so end-of-run notify fires.
+            except Exception as e:
+                # ANY failure in an item (missing skill file, claude -p error, a
+                # genuine un-mergeable PR, an unexpected state) must fail just that
+                # item and keep the run alive so end-of-run/notify still fires — a
+                # single item must never crash the whole driver via an unhandled
+                # exception (regression: a CalledProcessError once killed the run).
                 try:
                     runlog.set_item_status(run_log, sid, "failed", error=str(e)[:300])
                 except runlog.StatusError:
@@ -123,6 +152,20 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
     # nested filename `item-docs/specs/x.md.json`. The prompt still gets the full
     # spec path so the skill can locate the spec.
     iid = Path(sid).name
+    # Idempotent recovery: if a prior attempt already merged this item's PR (a
+    # crash can leave the run-log non-shipped while the PR is merged on GitHub),
+    # don't rebuild/re-judge/re-merge — just finish the interrupted tail (archive
+    # + shipped). Cheap to check, saves a full build cycle on resume.
+    prev_path = state_dir / f"item-{iid}.json"
+    if prev_path.exists():
+        prev = _read_json(prev_path)
+        if prev.get("pr") and _pr_state(prev["pr"], repo) == "MERGED":
+            runlog.set_item_status(run_log, sid, "awaiting_judge",
+                                   pr=prev.get("pr"), branch=prev.get("branch"))
+            _cleanup_worktree(prev.get("branch"), repo)
+            claude_cli.run(cfg.complete_cmd.format(slug=Path(sid).stem), repo=repo)
+            runlog.set_item_status(run_log, sid, "shipped")
+            return True
     # Build + ship-tail → ship-one writes item-<filename>.json, pauses before merge
     claude_cli.run(f"/ship-one {sid}", repo=repo)
     item = _read_json(state_dir / f"item-{iid}.json")
@@ -136,6 +179,9 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
         claude_cli.run(f"/judge-shipped {sid} {item.get('pr','')}", repo=repo)
         verdict = _read_json(state_dir / f"verdict-{iid}.json")
         if verdict.get("ok"):
+            # Remove the build worktree first so it stops leaking AND can't hold
+            # the branch open against `gh pr merge --delete-branch`.
+            _cleanup_worktree(item.get("branch"), repo)
             _merge_pr(item["pr"], repo)
             slug = Path(sid).stem
             claude_cli.run(cfg.complete_cmd.format(slug=slug), repo=repo)

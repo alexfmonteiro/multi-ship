@@ -190,6 +190,108 @@ def test_merge_pr_raises_when_merge_truly_failed(monkeypatch):
         driver._merge_pr("http://pr/1", "/repo")
 
 
+# ---------------------------------------------------------------------------
+# Crash-proof loop: an unexpected error in _process_item (e.g. a genuine merge
+# CalledProcessError) must fail the ITEM and still reach end-of-run/notify —
+# never crash the whole driver. Regression: the first real run died via an
+# uncaught CalledProcessError before the notify could fire.
+# ---------------------------------------------------------------------------
+
+def test_unexpected_error_fails_item_and_reaches_end_of_run(tmp_path, monkeypatch):
+    state = tmp_path / ".multi-ship"
+    def fake_run(prompt, repo, timeout=7200):
+        sid = "a.md"
+        if prompt.startswith("/ship-one"):
+            (state / f"item-{sid}.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "x"}
+        if prompt.startswith("/judge-shipped"):
+            (state / f"verdict-{sid}.json").write_text(json.dumps({"ok": True, "reason": "ok"}))
+            return {"result": "x"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    def boom(pr, repo):
+        raise subprocess.CalledProcessError(1, ["gh", "pr", "merge"])
+    monkeypatch.setattr(driver, "_merge_pr", boom)
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    reached = {}
+    real_eor = driver._end_of_run
+    monkeypatch.setattr(driver, "_end_of_run",
+                        lambda *a, **k: reached.setdefault("ran", True))
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert reached.get("ran"), "end-of-run/notify must run even after an unexpected error"
+    assert result["shipped"] == []
+    assert result["stopped_at"] == "a.md"
+
+
+# ---------------------------------------------------------------------------
+# Idempotent recovery: if a prior attempt already merged the item's PR, --resume
+# must NOT rebuild/re-judge/re-merge — just finish the tail (archive + shipped).
+# ---------------------------------------------------------------------------
+
+def test_resume_skips_rebuild_when_pr_already_merged(tmp_path, monkeypatch):
+    from multi_ship import runlog
+    state = tmp_path / ".multi-ship"; state.mkdir(parents=True)
+    rl = state / "run-log.json"
+    runlog.init_run_log(rl, order=["a.md"], stop_on_failure=True, notification_surface="none")
+    # Prior run got as far as a merged PR but crashed before recording shipped.
+    (state / "item-a.md.json").write_text(json.dumps(
+        {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+    calls = []
+    def fake_run(prompt, repo, timeout=7200):
+        calls.append(prompt.split()[0])
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(driver, "_pr_state", lambda pr, repo: "MERGED")
+    merges = []
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: merges.append(pr))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state, resume=True)
+    assert result["shipped"] == ["a.md"]
+    assert "/ship-one" not in calls, "must not rebuild an already-merged item"
+    assert "/judge-shipped" not in calls, "must not re-judge"
+    assert merges == [], "must not re-merge"
+    assert "/complete-spec" in calls, "must still archive (complete_cmd)"
+
+
+# ---------------------------------------------------------------------------
+# Worktree cleanup: the item's build worktree is removed (post-build) so it
+# stops leaking and can't block branch deletion.
+# ---------------------------------------------------------------------------
+
+def test_cleanup_worktree_removes_the_branch_worktree(monkeypatch):
+    porcelain = ("worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\n"
+                 "worktree /repo/.claude/worktrees/wf_1\nHEAD bbb\nbranch refs/heads/spec/a\n")
+    fake = _fake_subprocess({
+        ("git", "worktree", "list"): (0, porcelain, ""),
+        ("git", "worktree", "remove"): (0, "", ""),
+    })
+    monkeypatch.setattr(driver.subprocess, "run", fake)
+    driver._cleanup_worktree("spec/a", "/repo")
+    removes = [c for c in fake.calls if c[:3] == ["git", "worktree", "remove"]]
+    assert removes and removes[0][-1] == "/repo/.claude/worktrees/wf_1"
+
+
+def test_cleanup_worktree_noop_when_branch_not_in_a_worktree(monkeypatch):
+    fake = _fake_subprocess({
+        ("git", "worktree", "list"): (0, "worktree /repo\nbranch refs/heads/main\n", ""),
+    })
+    monkeypatch.setattr(driver.subprocess, "run", fake)
+    driver._cleanup_worktree("spec/a", "/repo")
+    assert not any(c[:3] == ["git", "worktree", "remove"] for c in fake.calls)
+
+
+def test_cleanup_worktree_empty_branch_is_noop(monkeypatch):
+    fake = _fake_subprocess({})
+    monkeypatch.setattr(driver.subprocess, "run", fake)
+    driver._cleanup_worktree("", "/repo")
+    assert fake.calls == []
+
+
 def test_fix_prompt_neutralizes_quotes_and_newlines():
     from multi_ship.driver import _fix_prompt
     p = _fix_prompt("a.md", 'missing "foo" test\nand bar')

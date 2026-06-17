@@ -6,6 +6,12 @@ All notable changes to multi-ship will be documented in this file.
 
 ### Added
 
+- **`multi-ship preflight <specs…>`** — a spec-readiness gate to run before an
+  unattended burst. Flags placeholder issue numbers (`Issue: 0`), a missing
+  Definition of Done, and `TBD`/`???`/`FIXME` markers, resolving the same spec
+  tokens/globs as a run. Exits 0 when all clear, 2 when any spec needs attention.
+  Catches mechanical gaps up front instead of stopping at the plan gate mid-run.
+
 - **Spec/issue resolver (`src/multi_ship/resolve.py`).** `multi-ship` now accepts
   work references in four forms, resolved in order: (1) **glob** — any token
   containing `*?[` is expanded via `Path(repo).glob()` in sorted order; (2)
@@ -71,6 +77,23 @@ All notable changes to multi-ship will be documented in this file.
 
 - README reframed to lead with the context-rot problem and the fresh-context-per-
   item fix, with new "Is this for me?" and "Safety & blast radius" sections.
+
+### Fixed
+
+- **The driver loop is now crash-proof.** Any unexpected error while processing an
+  item (including a genuine `gh pr merge` `CalledProcessError`) is caught, fails just
+  that item, and still reaches the end-of-run notify — a single item can no longer
+  kill the whole run via an unhandled exception.
+- **`_merge_pr` is fail-soft on post-merge branch cleanup.** A failed
+  `--delete-branch` (e.g. a leftover build worktree still holds the branch) no longer
+  crashes the run once the PR is confirmed `MERGED`; the merge itself still hard-fails
+  the item if it truly fails.
+- **Idempotent recovery on `--resume`.** If a prior attempt already merged an item's
+  PR, the driver short-circuits to the archive + `shipped` tail instead of rebuilding,
+  re-judging, and re-merging an already-merged PR.
+- **Build worktrees are cleaned up after merge.** The driver removes the item's build
+  worktree (fail-soft) before deleting its branch, so worktrees stop accumulating and
+  can't block branch deletion.
 
 ## v0.1.0 - 2026-06-16
 

@@ -39,12 +39,20 @@ Single item → use `autonomous-session`. Interactive ship-by-ship → normal wo
   `test_cmd`, and `build_invariants` in `.claude/multi-ship.json`.
 - **Failure policy.** Default: stop on first failure (later items often depend on earlier
   ones). Pass `--continue-on-failure` to override.
+- **Decision-complete specs.** Run `multi-ship preflight <specs…>` BEFORE launching and
+  resolve everything it flags with the operator up front. A spec with a placeholder
+  `Issue: 0`, no Definition of Done, or `TBD`/`???`/`FIXME` markers will otherwise burn a
+  full build cycle only to stop at the plan gate mid-run. Preflight catches mechanical
+  gaps; latent design ambiguity still surfaces at the plan gate, so also skim each spec
+  for unanswered design questions and batch them to the operator in one pass.
 
 ---
 
 ## How to run it
 
 ```bash
+# readiness gate first — resolve anything it flags before launching:
+multi-ship preflight docs/specs/P15.md docs/specs/P16.md docs/specs/P17.md
 multi-ship docs/specs/P15.md docs/specs/P16.md docs/specs/P17.md
 # or a glob:
 multi-ship docs/specs/P1*.md
@@ -61,6 +69,35 @@ Per-item state lives in `.multi-ship/item-<id>.json`; cross-item knowledge in
 `status: shipped` and restarts at the first non-shipped item.
 
 ---
+
+## When the run stops — failure taxonomy
+
+The driver never exits via an unhandled traceback: any item error is caught, the item is
+marked `failed`, and the end-of-run notify still fires (exit 2 when stopped). When you (the
+supervising agent) are relaying a stop, distinguish two kinds:
+
+- **Genuine failure** — a spec/build/judge problem: plan-gate REWORK, CI red the builder
+  couldn't fix, judge rejected twice, a real merge conflict. The work is wrong or
+  blocked. STOP and ping the operator with the reason; do not paper over it. This is what
+  "stop on first failure" protects against (later items often build on earlier ones).
+- **Spurious/infra hiccup** — the item's deliverable is actually fine but a mechanical
+  step failed (e.g. a flaky post-merge cleanup; a PR that merged on GitHub while the
+  run-log still says otherwise). Verify the real state (`gh pr view`, `git`), finish the
+  interrupted tail, and `--resume`. The driver now self-heals the common cases
+  (`_merge_pr` is fail-soft on branch cleanup; `_process_item` short-circuits an
+  already-merged PR on resume instead of rebuilding), so a clean `--resume` usually
+  suffices — but confirm before continuing.
+
+## Permissions (parent-session recovery)
+
+The driver's `claude -p` children run with `--permission-mode bypassPermissions`, so the
+driver pushes, merges, and deletes branches on its own. A **parent interactive session**
+doing manual recovery does NOT have that — the auto-mode classifier blocks `git push
+origin main` and remote-branch deletes. Before a run that may need hands-on recovery,
+either add `Bash(git push origin main:*)` to `.claude/settings.local.json`, or expect to
+hand those pushes to the operator (`! git push origin main`). Commit recovery work
+locally regardless — the next `--resume` build worktree branches from local HEAD and will
+see it.
 
 ## What the driver does NOT do
 
