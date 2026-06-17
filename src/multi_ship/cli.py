@@ -1,8 +1,9 @@
-"""multi-ship CLI: run a backlog, `init` a repo, or `install-skills`."""
+"""multi-ship CLI: run a backlog, `init` a repo, `install-skills`, or `status`."""
 from __future__ import annotations
 import argparse
 import glob
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -65,6 +66,66 @@ def cmd_init(repo: str, template_path: Path) -> None:
     if line not in existing:
         gi.write_text(existing + ("\n" if existing and not existing.endswith("\n") else "") + line + "\n")
 
+_STATUS_LABEL = {
+    "pending": "pending",
+    "awaiting_judge": "awaiting",
+    "needs_fix": "needs-fix",
+    "shipped": "shipped",
+    "failed": "failed",
+}
+_STATUS_COLOR = {  # ANSI; only applied when writing to a TTY
+    "pending": "90", "awaiting_judge": "36", "needs_fix": "33",
+    "shipped": "32", "failed": "31",
+}
+
+def _pr_label(pr) -> str:
+    """Compact PR reference for the table: '#41' from a number or a /pull/41 URL."""
+    if not pr:
+        return ""
+    s = str(pr)
+    if s.isdigit():
+        return f"#{s}"
+    m = re.search(r"/pull/(\d+)", s)
+    return f"#{m.group(1)}" if m else s
+
+def format_status(log: dict, repo: str, color: bool = False) -> str:
+    items = log.get("items", [])
+    shipped = sum(1 for it in items if it.get("status") == "shipped")
+    policy = "stop on first failure" if log.get("stop_on_failure", True) else "continue on failure"
+    out = [f"multi-ship — {repo}",
+           f"policy: {policy}   |   shipped {shipped}/{len(items)}", ""]
+    if not items:
+        out.append("  (run-log has no items)")
+        return "\n".join(out)
+
+    prs = [_pr_label(it.get("pr")) for it in items]
+    idx_w = max(len(str(len(items))), 1)
+    st_w = max(len(v) for v in _STATUS_LABEL.values())
+    id_w = max((len(it["id"]) for it in items), default=4)
+    pr_w = max([len("pr")] + [len(p) for p in prs])
+
+    out.append(f"  {'#':>{idx_w}}  {'status':<{st_w}}  {'item':<{id_w}}  {'pr':<{pr_w}}  note")
+    for i, (it, pr) in enumerate(zip(items, prs), 1):
+        st = it.get("status", "pending")
+        label = _STATUS_LABEL.get(st, st).ljust(st_w)
+        if color:
+            label = f"\033[{_STATUS_COLOR.get(st, '0')}m{label}\033[0m"
+        note = (it.get("judge_reason") or it.get("error") or "").replace("\n", " ").strip()
+        if len(note) > 60:
+            note = note[:57] + "..."
+        out.append(f"  {i:>{idx_w}}  {label}  {it['id']:<{id_w}}  {pr:<{pr_w}}  {note}".rstrip())
+    return "\n".join(out)
+
+def cmd_status(repo: str) -> int:
+    run_log = Path(repo) / ".multi-ship" / "run-log.json"
+    if not run_log.exists():
+        print(f"no run-log at {run_log} — nothing has shipped here yet", file=sys.stderr)
+        return 1
+    import json
+    log = json.loads(run_log.read_text())
+    print(format_status(log, str(Path(repo).resolve()), color=sys.stdout.isatty()))
+    return 0
+
 def _resolve_specs(args, cfg) -> list[str]:
     if args.specs:
         out = []
@@ -85,6 +146,14 @@ def main(argv=None) -> int:
         return 0
     if argv and argv[0] == "install-skills":
         return cmd_install_skills(copy="--copy" in argv[1:])
+    if argv and argv[0] == "status":
+        rest = argv[1:]
+        repo = "."
+        if "--repo" in rest:
+            repo = rest[rest.index("--repo") + 1]
+        elif rest and not rest[0].startswith("-"):
+            repo = rest[0]
+        return cmd_status(repo)
 
     p = argparse.ArgumentParser(prog="multi-ship")
     p.add_argument("specs", nargs="*")

@@ -46,6 +46,10 @@ etc.) so the PR merges without friction.
 
 ---
 
+> A full, publish-ready announcement post (blog / dev.to / Show HN body) lives in
+> [docs/launch-post.md](launch-post.md) — post it as the canonical write-up and
+> link it from the channels below.
+
 ## 2. Show HN / Hacker News
 
 Title (lead with the insight, not the product name):

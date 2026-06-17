@@ -174,9 +174,17 @@ Subcommands:
 |---|---|
 | `multi-ship init [repo]` | Scaffold `.claude/multi-ship.json` and add `.multi-ship/` to `.gitignore`. `repo` defaults to `.` |
 | `multi-ship install-skills [--copy]` | Link (or copy) the bundled skills into `~/.claude/skills` |
+| `multi-ship status [repo]` | Print the current run's per-item status table (shipped / awaiting / needs-fix / failed / pending) from `.multi-ship/run-log.json` |
 
 Specs run in the order you give them (or in glob sort order). The driver does not
 reorder them.
+
+### Run it in CI
+
+The driver is cross-platform, so you can ship a backlog unattended in GitHub
+Actions instead of tying up your laptop — see
+[`examples/github-actions/`](examples/github-actions/) for a ready-to-copy
+`workflow_dispatch` workflow (and its safety notes).
 
 ---
 

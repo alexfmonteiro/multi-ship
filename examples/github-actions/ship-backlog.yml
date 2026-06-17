@@ -1,0 +1,72 @@
+# Run a multi-ship backlog unattended in CI.
+#
+# Copy to .github/workflows/ship-backlog.yml IN THE REPO YOU WANT TO SHIP INTO
+# (not the multi-ship repo). Triggered manually so a human decides when an
+# autonomous run starts.
+#
+# Prerequisites:
+#   - Secret ANTHROPIC_API_KEY (repo or org) for the Claude CLI.
+#   - The repo already has .claude/multi-ship.json (run `multi-ship init`).
+#   - In multi-ship.json set `verify` to a CI command that works in Actions,
+#     e.g. "gh pr checks $PR --watch", and `notify` to "echo" (or a webhook).
+#
+# ⚠️  This runs Claude with bypassPermissions and merges PRs unattended. Scope
+#     the token, protect your default branch, and start with one trivial spec.
+name: ship-backlog
+on:
+  workflow_dispatch:
+    inputs:
+      specs:
+        description: "Spec glob or paths to ship (e.g. docs/specs/*.md)"
+        required: true
+        default: "docs/specs/*.md"
+      continue_on_failure:
+        description: "Keep going past a failed item"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write        # commit + push branches, merge
+  pull-requests: write   # open + merge PRs
+
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code + multi-ship
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          pipx install git+https://github.com/alexfmonteiro/multi-ship.git
+          multi-ship install-skills --copy   # CI: copy, don't symlink
+
+      - name: Configure git identity
+        run: |
+          git config user.name "multi-ship[bot]"
+          git config user.email "multi-ship@users.noreply.github.com"
+
+      - name: Ship the backlog
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}        # gh CLI auth for PR/merge
+        run: |
+          FLAG=""
+          if [ "${{ inputs.continue_on_failure }}" = "true" ]; then
+            FLAG="--continue-on-failure"
+          fi
+          multi-ship ${{ inputs.specs }} $FLAG
+
+      - name: Print run status
+        if: always()
+        run: multi-ship status || true
