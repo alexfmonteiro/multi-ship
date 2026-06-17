@@ -20,6 +20,33 @@ def test_main_init_routes(tmp_path):
     assert rc == 0
     assert (tmp_path / ".claude" / "multi-ship.json").exists()
 
+def test_bundled_dir_resolves_source_layout():
+    # From the source checkout, bundled_dir falls back to the top-level dirs.
+    skills = cli.bundled_dir("skills")
+    templates = cli.bundled_dir("templates")
+    assert skills.is_dir() and (skills / "ship-one" / "SKILL.md").exists()
+    assert (templates / "multi-ship.json").exists()
+
+def test_install_skills_links_into_fake_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    rc = cli.cmd_install_skills()
+    assert rc == 0
+    linked = home / ".claude" / "skills"
+    assert (linked / "ship-one").exists()
+    assert (linked / "judge-shipped").exists()
+
+def test_install_skills_skips_non_symlink(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    existing = home / ".claude" / "skills" / "ship-one"
+    existing.mkdir(parents=True)
+    (existing / "SKILL.md").write_text("user's own skill")
+    cli.cmd_install_skills()
+    # a real (non-symlink) skill of the same name is left untouched
+    assert not (existing).is_symlink()
+    assert (existing / "SKILL.md").read_text() == "user's own skill"
+
 def test_main_specs_route_to_run_loop(tmp_path, monkeypatch):
     # A bare spec arg must NOT be mis-parsed as a subcommand (regression: the
     # old add_subparsers captured the first positional and rejected spec paths).

@@ -1,0 +1,25 @@
+name: plugin
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # Blocking guard: manifests parse, required keys present, every skill has a
+      # SKILL.md, and the version is in sync across pyproject/plugin/marketplace.
+      # Pure Python — no Claude CLI, no auth, so it's reliable in CI.
+      - name: Static manifest + version-sync guard
+        run: python scripts/validate_plugin.py
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      # The official check needs the authenticated Claude CLI, which CI does not
+      # have — run it best-effort so a green run is informative but an auth/install
+      # hiccup can't block the merge. Run `claude plugin validate . --strict`
+      # locally before tagging a release (see docs/PUBLISHING.md).
+      - name: Official Claude Code plugin validation (best-effort)
+        continue-on-error: true
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate . --strict

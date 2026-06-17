@@ -121,7 +121,20 @@ repo link. Don't spam multiple channels.
 ## 5. After launch
 
 - [ ] Add a `## Star history` chart (star-history.com) once you have traction.
-- [ ] Publish to **PyPI** so `pipx install multi-ship` works without a clone
-      (bundle skills as package data first, then update the Quickstart).
-- [ ] Package as a **Claude Code plugin** for marketplace install.
+- [x] ~~Bundle skills so a wheel install works without a clone~~ — done; the wheel
+      force-includes skills/templates/workflows. `pipx install git+…` works today.
+- [ ] **Publish to PyPI** so `pipx install multi-ship` works without the `git+`
+      prefix. The wheel is ready — follow [docs/PUBLISHING.md](PUBLISHING.md).
+- [x] ~~Package as a Claude Code plugin~~ — done; `.claude-plugin/` ships a plugin
+      manifest + self-hosted marketplace (`claude plugin validate . --strict`
+      passes). Promote the marketplace install line (below).
+- [ ] **Submit to a third-party plugin marketplace** for extra discovery (PR an
+      entry pointing at `{ "source": "github", "repo": "alexfmonteiro/multi-ship" }`).
 - [ ] Turn the best HN/Reddit comments into a short FAQ in the README.
+
+**Plugin install line to include in posts:**
+
+```text
+/plugin marketplace add alexfmonteiro/multi-ship
+/plugin install multi-ship@multi-ship
+```

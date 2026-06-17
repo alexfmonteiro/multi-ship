@@ -14,11 +14,24 @@ from .config import load_config
 # checkout and from an editable install (both point back at the project tree).
 PKG_ROOT = Path(__file__).resolve().parents[2]
 
+def bundled_dir(name: str) -> Path:
+    """Locate a bundled resource dir (skills / templates / workflows).
+
+    Works from a source or editable checkout (top-level dir at the repo root)
+    AND from an installed wheel, where the dirs are force-included under
+    `multi_ship/_bundle/` (see pyproject.toml). Returns the first that exists,
+    falling back to the source-layout path so callers can report a clean error."""
+    candidates = [
+        Path(__file__).resolve().parent / "_bundle" / name,  # installed wheel
+        PKG_ROOT / name,                                       # source / editable
+    ]
+    return next((c for c in candidates if c.exists()), candidates[-1])
+
 def cmd_install_skills(copy: bool = False) -> int:
-    """Link (or copy) the bundled skills into ~/.claude/skills and put the
-    `multi-ship` console script on notice. Mirrors install.sh so a pip/pipx
-    install needs no second clone. Idempotent; refuses to clobber a real file."""
-    src = PKG_ROOT / "skills"
+    """Link (or copy) the bundled skills into ~/.claude/skills. Mirrors
+    install.sh so a pip/pipx install needs no second clone. Idempotent; refuses
+    to clobber a real (non-symlink) file."""
+    src = bundled_dir("skills")
     if not src.is_dir():
         print(f"bundled skills not found at {src}", file=sys.stderr)
         return 1
@@ -67,7 +80,7 @@ def main(argv=None) -> int:
     # first positional, breaking the primary `multi-ship <specs...>` form.
     if argv and argv[0] == "init":
         repo = argv[1] if len(argv) > 1 and not argv[1].startswith("-") else "."
-        cmd_init(repo, template_path=PKG_ROOT / "templates" / "multi-ship.json")
+        cmd_init(repo, template_path=bundled_dir("templates") / "multi-ship.json")
         print(f"initialized {repo}/.claude/multi-ship.json")
         return 0
     if argv and argv[0] == "install-skills":
