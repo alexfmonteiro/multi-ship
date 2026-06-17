@@ -52,6 +52,10 @@ def test_main_specs_route_to_run_loop(tmp_path, monkeypatch):
     # old add_subparsers captured the first positional and rejected spec paths).
     (tmp_path / ".claude").mkdir(parents=True)
     shutil.copy(TEMPLATE, tmp_path / ".claude" / "multi-ship.json")
+    # Create the spec file so the new existence gate passes (STEP 7 fix).
+    spec_file = tmp_path / "docs" / "specs" / "x.md"
+    spec_file.parent.mkdir(parents=True)
+    spec_file.write_text("# x")
     captured = {}
     def fake_run_loop(**kw):
         captured.update(kw)

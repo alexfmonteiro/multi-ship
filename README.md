@@ -160,6 +160,32 @@ Ship everything matching the config glob:
 multi-ship
 ```
 
+multi-ship accepts work references the way you think about them — not just full paths:
+
+```bash
+# Bare spec id (no path, no .md): resolved to <spec_dir>/<id>.md from cfg.spec_glob
+multi-ship P14
+
+# Issue reference (positional #N token): resolved via gh issue view
+multi-ship "#42"
+
+# Issue flag (repeatable; same resolution path as #N):
+multi-ship --issue 42
+multi-ship --issue 42 --issue 43
+
+# Existing path or glob: unchanged behavior
+multi-ship docs/specs/P14.md
+multi-ship "docs/specs/P1*.md"
+```
+
+The `<spec_dir>` is derived from the configured `spec_glob` (e.g. `docs/specs/*.md` →
+`docs/specs`). All forms are resolved relative to `--repo` and return repo-relative paths.
+Argument order is preserved in the final spec list.
+
+**Disambiguation note:** a bare digit without `#` (e.g. `42`) is treated as a spec id
+(`<spec_dir>/42.md`), **not** an issue. Use `#42` or `--issue 42` for GitHub issue
+resolution.
+
 Flags:
 
 | Flag | Meaning |
@@ -167,6 +193,7 @@ Flags:
 | `--continue-on-failure` | Keep processing remaining specs when an item fails (default: stop at the first failure) |
 | `--resume` | Skip specs already `shipped` in the run-log; restart at the first non-shipped item |
 | `--repo <path>` | Repo root (default: current working directory) |
+| `--issue N` | Resolve GitHub issue N to its spec file and add it to the run list (repeatable) |
 
 Subcommands:
 
