@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import driver
 from .config import load_config
+from .resolve import ResolveError, resolve_specs
 
 # Repo/package root: src/multi_ship/cli.py -> parents[2]. Works from a source
 # checkout and from an editable install (both point back at the project tree).
@@ -126,13 +127,27 @@ def cmd_status(repo: str) -> int:
     print(format_status(log, str(Path(repo).resolve()), color=sys.stdout.isatty()))
     return 0
 
-def _resolve_specs(args, cfg) -> list[str]:
-    if args.specs:
-        out = []
-        for s in args.specs:
-            out.extend(sorted(glob.glob(s)) if any(c in s for c in "*?[") else [s])
-        return out
-    return sorted(glob.glob(cfg.spec_glob))
+def _resolve_specs(args, cfg, repo: Path) -> list[str]:
+    """Resolve spec tokens and --issue integers to repo-relative paths.
+
+    Falls back to globbing cfg.spec_glob (rebased on repo) when no positional
+    specs and no --issue flags are given — preserving backward compatibility.
+    """
+    if not args.specs and not (args.issue or []):
+        # No-arg fallback: glob cfg.spec_glob rebased on repo (3.9-safe).
+        # Still validate for recursive globs before attempting to glob.
+        from .resolve import _spec_dir_from_glob  # validates ** and derives spec_dir
+        _spec_dir_from_glob(cfg.spec_glob)  # raises ResolveError if ** found
+        return sorted(
+            str(p.relative_to(repo))
+            for p in Path(repo).glob(cfg.spec_glob)
+        )
+    return resolve_specs(
+        tokens=args.specs or [],
+        issue_numbers=args.issue or [],
+        cfg=cfg,
+        repo=repo,
+    )
 
 def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
@@ -160,11 +175,16 @@ def main(argv=None) -> int:
     p.add_argument("--repo", default=".")
     p.add_argument("--continue-on-failure", action="store_true")
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--issue", action="append", type=int, default=None)
     args = p.parse_args(argv)
 
     repo = Path(args.repo).resolve()
     cfg = load_config(repo / ".claude" / "multi-ship.json")
-    specs = _resolve_specs(args, cfg)
+    try:
+        specs = _resolve_specs(args, cfg, repo)
+    except ResolveError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     if not specs:
         print("no specs to ship", file=sys.stderr); return 1
     state_dir = repo / ".multi-ship"

@@ -6,6 +6,28 @@ All notable changes to multi-ship will be documented in this file.
 
 ### Added
 
+- **Spec/issue resolver (`src/multi_ship/resolve.py`).** `multi-ship` now accepts
+  work references in four forms, resolved in order: (1) **glob** — any token
+  containing `*?[` is expanded via `Path(repo).glob()` in sorted order; (2)
+  **existing path** — token exists on disk relative to `--repo`; (3) **issue
+  reference** — `#N` token or `--issue N` flag resolves via `gh issue view`: title
+  prefix `[id]` maps to `<spec_dir>/<id>.md`, falling back to the first `.md` path
+  found in the issue body; (4) **bare spec id** — any token with no `/` and not
+  ending in `.md` maps to `<spec_dir>/<token>.md`. The `<spec_dir>` is derived from
+  `cfg.spec_glob` (e.g. `docs/specs/*.md` → `docs/specs`). All resolution is
+  rebased on the `--repo` path and returns repo-relative strings; argument order is
+  preserved (input order wins; a single glob token expands sorted, but the list is
+  not globally re-sorted). A resolved path that does not exist raises a clear error
+  and exits non-zero without starting a run. Recursive `**` globs in `cfg.spec_glob`
+  or in positional tokens are rejected with a clear error. The `gh` call is behind a
+  mockable seam (`_gh_issue_title` / `_gh_issue_body`); `gh` failures produce a
+  clear non-crashing error message. **Disambiguation:** a bare digit without `#`
+  (e.g. `42`) is a spec id (`<spec_dir>/42.md`), not an issue; use `#42` or
+  `--issue 42` for issue resolution.
+- **`--issue N` flag** (repeatable via `action="append"`, type-checked as int by
+  argparse) added to the main `multi-ship` parser. Each `--issue` value is resolved
+  through the issue path and appended to the spec list after positional tokens.
+
 - **Built-in Telegram notification backend.** Set `"notify": "telegram"` in
   `.claude/multi-ship.json` to receive end-of-run summaries via a Telegram bot
   with no extra packages — the backend is stdlib-only (`urllib`, `pathlib`).
