@@ -49,13 +49,22 @@ def compare_git_state(before: dict, after: dict) -> list[str]:
     return problems
 
 def format_notification(shipped: list[str], stopped_at, followups: list[str],
-                        run_log_path: str, followups_path) -> str:
+                        run_log_path: str, followups_path,
+                        stop_kind=None, stop_notes=None) -> str:
     lines = []
     status = "✅ all shipped" if stopped_at is None else f"⚠️ stopped at {stopped_at}"
     lines.append(f"multi-ship: {status}")
     lines.append(f"shipped ({len(shipped)}): {', '.join(shipped) if shipped else 'none'}")
     if stopped_at:
-        lines.append(f"stopped at: {stopped_at}")
+        line = f"stopped at: {stopped_at}"
+        if stop_kind:
+            line += f" [{stop_kind}]"
+        lines.append(line)
+        if stop_notes:
+            why = str(stop_notes).replace("\n", " ").strip()
+            if len(why) > 300:
+                why = why[:300] + "…"
+            lines.append(f"why: {why}")
     if followups:
         lines.append(f"follow-ups ({len(followups)}) — see {followups_path}:")
         lines.extend(f"  - {f}" for f in followups)

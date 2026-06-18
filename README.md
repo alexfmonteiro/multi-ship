@@ -192,6 +192,7 @@ Flags:
 |---|---|
 | `--continue-on-failure` | Keep processing remaining specs when an item fails (default: stop at the first failure) |
 | `--resume` | Skip specs already `shipped` in the run-log; restart at the first non-shipped item |
+| `--fresh` | Archive any existing `run-log.json` to `.multi-ship/archive/<timestamp>/` and start a brand-new run. Forces the archive even when the prior run is non-terminal or the backlog is unchanged. Never combined with `--resume` (resume wins and never archives) |
 | `--repo <path>` | Repo root (default: current working directory) |
 | `--issue N` | Resolve GitHub issue N to its spec file and add it to the run list (repeatable) |
 
@@ -347,7 +348,7 @@ All per-run state lives in `.multi-ship/` at the repo root (gitignored):
 |---|---|
 | `run-log.json` | Ordered item list, per-item status, stop-on-failure setting, notification surface. Written fail-closed before item 1. |
 | `HANDOFF.md` | Fixed-schema append-only doc shared across all items: *Discovered knowledge*, *Errors and fixes*, *Live resources*, *Design decisions*, *Open notes*. |
-| `item-<id>.json` | Per-item report written by `ship-one`: status, PR URL, branch, DoD array, files touched, follow-ups, CI tail, parent notes. |
+| `item-<id>.json` | Per-item report written by `ship-one`: status, PR URL, branch, DoD array, files touched, follow-ups, CI tail, parent notes, and (on failure) a `failure_kind`. |
 | `verdict-<id>.json` | Per-item judge verdict written by `judge-shipped`: `{ok, reason}`. |
 | `dream-proposals.md` | Proposed CLAUDE.md and memory additions from `dream-run`. Operator-reviewed; never auto-applied. |
 | `followups.md` | Follow-up items collected from all item reports at end-of-run. |
@@ -355,6 +356,17 @@ All per-run state lives in `.multi-ship/` at the repo root (gitignored):
 `--resume` reads `run-log.json`, skips items with `status: shipped`, and restarts
 at the first item that is not yet shipped. It does not clear or rewrite existing
 artifacts.
+
+**Auto-archive of a completed prior run.** When a `run-log.json` already exists and you
+are *not* resuming, multi-ship checks whether the prior run is fully terminal (every item
+`shipped` or `failed`) and whether the backlog you passed differs from the prior run's
+`order` (an exact, order-sensitive list comparison). If both hold, it moves the whole
+prior `.multi-ship/` contents into `.multi-ship/archive/<timestamp>/` and starts a clean
+run — so the common "previous backlog finished, here's the next batch" case just works.
+A non-terminal prior run (something still in flight) is *not* auto-archived; pass
+`--fresh` to force the archive, `--resume` to continue it, or remove `.multi-ship/`
+yourself. `--fresh` always archives and proceeds regardless of terminal/backlog state.
+The `archive/<timestamp>/` dir lives under the already-gitignored `.multi-ship/`.
 
 ---
 
