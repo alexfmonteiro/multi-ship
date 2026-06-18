@@ -6,6 +6,29 @@ All notable changes to multi-ship will be documented in this file.
 
 ### Added
 
+- **Failure taxonomy (`failure_kind`).** A failed item now carries a closed-vocabulary
+  `failure_kind` so operators can triage at a glance. `ship-one` sets `config_error`,
+  `plan_gate_rework`, `ci_failed`, or `needs_redesign` at its stop sites; the driver
+  owns `judge_rejected` (a cold-judge rejection it can't fix) and `error` (an unexpected
+  exception). A failed item with no kind from the skill defaults to `unknown`. The kind
+  is stdlib-only metadata on the run-log item — no config change, existing run-logs load
+  unchanged.
+- **`parent_notes` surfacing.** The skill's `parent_notes` (and the chosen `failure_kind`)
+  now propagate onto the run-log item, into the end-of-run notification, and into the
+  `multi-ship status` table. The notification's stopped-at line gains a `[<kind>]` token
+  and a `why:` line (newlines collapsed to spaces, truncated to ~300 chars). The status
+  table prefixes the note column with `[<kind>]` and falls back judge_reason →
+  parent_notes → error. `parent_notes` must stay secret-free (skill §8 hygiene).
+- **Auto-archive of a completed prior run + `--fresh`.** When a prior `run-log.json`
+  exists, is fully terminal (every item `shipped`/`failed`), and the new backlog differs
+  from the prior `order`, multi-ship now archives the prior run to
+  `.multi-ship/archive/<timestamp>/` and proceeds — instead of refusing. The new
+  `--fresh` flag forces this archive-and-proceed over any prior run-log (terminal or
+  not). `--resume` is still checked first and never archives. A non-terminal run-log
+  without `--fresh` still refuses, now with an improved three-option message
+  (`--resume` / `--fresh` / remove `.multi-ship/`). The archive dir lives under the
+  gitignored `.multi-ship/`.
+
 - **`multi-ship preflight <specs…>`** — a spec-readiness gate to run before an
   unattended burst. Flags placeholder issue numbers (`Issue: 0`), a missing
   Definition of Done, and `TBD`/`???`/`FIXME` markers, resolving the same spec

@@ -130,7 +130,8 @@ def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
                 # single item must never crash the whole driver via an unhandled
                 # exception (regression: a CalledProcessError once killed the run).
                 try:
-                    runlog.set_item_status(run_log, sid, "failed", error=str(e)[:300])
+                    runlog.set_item_status(run_log, sid, "failed",
+                                           error=str(e)[:300], failure_kind="error")
                 except runlog.StatusError:
                     pass
                 ok = False
@@ -170,7 +171,9 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
     claude_cli.run(f"/ship-one {sid}", repo=repo)
     item = _read_json(state_dir / f"item-{iid}.json")
     if item.get("status") == "failed":
-        runlog.set_item_status(run_log, sid, "failed", **{k: item.get(k) for k in ("pr",) if item.get(k)})
+        fields = {k: item.get(k) for k in ("pr", "parent_notes") if item.get(k)}
+        fields["failure_kind"] = item.get("failure_kind") or "unknown"
+        runlog.set_item_status(run_log, sid, "failed", **fields)
         return False
     runlog.set_item_status(run_log, sid, "awaiting_judge", pr=item.get("pr"), branch=item.get("branch"))
 
@@ -193,7 +196,10 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
             claude_cli.run(_fix_prompt(sid, verdict.get("reason", "")), repo=repo)
             item = _read_json(state_dir / f"item-{iid}.json")
             runlog.set_item_status(run_log, sid, "awaiting_judge", pr=item.get("pr"))
-    runlog.set_item_status(run_log, sid, "failed", judge_reason=verdict.get("reason"))
+    jf = {"judge_reason": verdict.get("reason"), "failure_kind": "judge_rejected"}
+    if item.get("parent_notes"):
+        jf["parent_notes"] = item.get("parent_notes")
+    runlog.set_item_status(run_log, sid, "failed", **jf)
     return False
 
 def _end_of_run(repo: str, cfg: Config, state_dir: Path, run_log: Path,
@@ -210,7 +216,15 @@ def _end_of_run(repo: str, cfg: Config, state_dir: Path, run_log: Path,
         fp.write_text("# multi-ship follow-ups\n\n" + "\n".join(f"- {f}" for f in followups) + "\n")
         followups_path = str(fp)
     problems = endrun.compare_git_state(baseline, endrun.git_snapshot(repo))
-    msg = endrun.format_notification(shipped, stopped_at, followups, str(run_log), followups_path)
+    stop_kind = stop_notes = None
+    if stopped_at:
+        stopped_item = next((it for it in log["items"] if it["id"] == stopped_at), None)
+        if stopped_item is not None:
+            stop_kind = stopped_item.get("failure_kind")
+            stop_notes = stopped_item.get("parent_notes")
+    msg = endrun.format_notification(shipped, stopped_at, followups, str(run_log),
+                                     followups_path, stop_kind=stop_kind,
+                                     stop_notes=stop_notes)
     if problems:
         msg += "\n\nWARNING — parent checkout changed unexpectedly:\n" + "\n".join(f"  - {p}" for p in problems)
     if cfg.notify == "telegram":

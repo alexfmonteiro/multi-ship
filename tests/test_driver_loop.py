@@ -84,6 +84,70 @@ def test_judge_reject_twice_stops(tmp_path, monkeypatch):
                              stop_on_failure=True, state_dir=state)
     assert result["shipped"] == []
     assert result["stopped_at"] == "a.md"
+    log = json.loads((state / "run-log.json").read_text())
+    a = next(it for it in log["items"] if it["id"] == "a.md")
+    assert a["failure_kind"] == "judge_rejected"
+
+def test_ship_one_failed_propagates_kind_and_notes(tmp_path, monkeypatch):
+    state = tmp_path / ".multi-ship"
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "failed", "failure_kind": "plan_gate_rework",
+                 "parent_notes": "fold the G3 premise"}))
+            return {"result": "x"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: None)
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                    stop_on_failure=True, state_dir=state)
+    log = json.loads((state / "run-log.json").read_text())
+    a = next(it for it in log["items"] if it["id"] == "a.md")
+    assert a["failure_kind"] == "plan_gate_rework"
+    assert a["parent_notes"] == "fold the G3 premise"
+
+def test_ship_one_failed_without_kind_defaults_unknown(tmp_path, monkeypatch):
+    state = tmp_path / ".multi-ship"
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps({"status": "failed"}))
+            return {"result": "x"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: None)
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                    stop_on_failure=True, state_dir=state)
+    log = json.loads((state / "run-log.json").read_text())
+    a = next(it for it in log["items"] if it["id"] == "a.md")
+    assert a["failure_kind"] == "unknown"
+
+def test_unexpected_error_sets_failure_kind_error(tmp_path, monkeypatch):
+    state = tmp_path / ".multi-ship"
+    def fake_run(prompt, repo, timeout=7200):
+        sid = "a.md"
+        if prompt.startswith("/ship-one"):
+            (state / f"item-{sid}.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "x"}
+        if prompt.startswith("/judge-shipped"):
+            (state / f"verdict-{sid}.json").write_text(json.dumps({"ok": True, "reason": "ok"}))
+            return {"result": "x"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    def boom(pr, repo):
+        raise subprocess.CalledProcessError(1, ["gh", "pr", "merge"])
+    monkeypatch.setattr(driver, "_merge_pr", boom)
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                    stop_on_failure=True, state_dir=state)
+    log = json.loads((state / "run-log.json").read_text())
+    a = next(it for it in log["items"] if it["id"] == "a.md")
+    assert a["failure_kind"] == "error"
 
 def test_continue_on_failure_advances_past_failed(tmp_path, monkeypatch):
     state = tmp_path / ".multi-ship"
@@ -375,6 +439,25 @@ def test_dispatch_none_no_telegram(tmp_path, monkeypatch):
     driver._end_of_run(str(tmp_path), cfg, state, state / "run-log.json", [], None, {})
 
     assert len(send_calls) == 0
+
+
+def test_end_of_run_notification_includes_failure_kind_token(tmp_path, monkeypatch):
+    """_end_of_run looks up the stopped item and surfaces its failure_kind +
+    parent_notes in the notification text."""
+    from multi_ship import endrun, runlog
+    state = tmp_path / ".multi-ship"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "HANDOFF.md").write_text("# HANDOFF\n")
+    rl = state / "run-log.json"
+    runlog.init_run_log(rl, order=["a.md"], stop_on_failure=True, notification_surface="none")
+    runlog.set_item_status(rl, "a.md", "failed",
+                           failure_kind="plan_gate_rework", parent_notes="fold G3")
+    captured = []
+    monkeypatch.setattr(endrun, "run_notify", lambda cmd, msg: captured.append(msg))
+    driver._end_of_run(str(tmp_path), _cfg_notify("true"), state, rl, [], "a.md", {})
+    assert captured
+    assert "[plan_gate_rework]" in captured[0]
+    assert "fold G3" in captured[0]
 
 
 def test_item_id_uses_filename_not_full_path(tmp_path, monkeypatch):

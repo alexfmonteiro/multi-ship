@@ -111,11 +111,29 @@ def format_status(log: dict, repo: str, color: bool = False) -> str:
         label = _STATUS_LABEL.get(st, st).ljust(st_w)
         if color:
             label = f"\033[{_STATUS_COLOR.get(st, '0')}m{label}\033[0m"
-        note = (it.get("judge_reason") or it.get("error") or "").replace("\n", " ").strip()
+        kind = it.get("failure_kind")
+        detail = (it.get("judge_reason") or it.get("parent_notes")
+                  or it.get("error") or "").replace("\n", " ").strip()
+        note = f"[{kind}] {detail}".strip() if kind else detail
         if len(note) > 60:
             note = note[:57] + "..."
         out.append(f"  {i:>{idx_w}}  {label}  {it['id']:<{id_w}}  {pr:<{pr_w}}  {note}".rstrip())
     return "\n".join(out)
+
+def _archive_completed_run(state_dir: Path, ts: str | None = None) -> Path:
+    """Move every top-level entry of `state_dir` (except the archive root itself)
+    into state_dir/archive/<ts>/, returning the destination dir. `ts` defaults to
+    a microsecond-precise timestamp so repeated archives never collide."""
+    from datetime import datetime
+    ts = ts or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    archive_root = state_dir / "archive"
+    dest = archive_root / ts
+    dest.mkdir(parents=True, exist_ok=True)
+    for entry in state_dir.iterdir():
+        if entry == archive_root:
+            continue
+        shutil.move(str(entry), str(dest / entry.name))
+    return dest
 
 def cmd_status(repo: str) -> int:
     run_log = Path(repo) / ".multi-ship" / "run-log.json"
@@ -211,6 +229,7 @@ def main(argv=None) -> int:
     p.add_argument("--repo", default=".")
     p.add_argument("--continue-on-failure", action="store_true")
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--fresh", action="store_true")
     p.add_argument("--issue", action="append", type=int, default=None)
     args = p.parse_args(argv)
 
@@ -224,10 +243,28 @@ def main(argv=None) -> int:
     if not specs:
         print("no specs to ship", file=sys.stderr); return 1
     state_dir = repo / ".multi-ship"
-    if (state_dir / "run-log.json").exists() and not args.resume:
-        print("a previous run-log exists at .multi-ship/run-log.json — pass --resume "
-              "to continue it, or remove .multi-ship/ to start fresh", file=sys.stderr)
-        return 2
+    run_log_path = state_dir / "run-log.json"
+    # --resume is checked FIRST so a resume never archives. Otherwise, when a
+    # prior run-log exists, auto-archive it iff the prior run is fully terminal
+    # AND the backlog differs (or the operator forced --fresh); else refuse with
+    # the three-option message.
+    if run_log_path.exists() and not args.resume:
+        import json
+        try:
+            log = json.loads(run_log_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            log = {}
+        all_terminal = bool(log.get("items")) and all(
+            it.get("status") in ("shipped", "failed") for it in log["items"])
+        different_backlog = list(specs) != list(log.get("order", []))
+        if args.fresh or (all_terminal and different_backlog):
+            dest = _archive_completed_run(state_dir)
+            print(f"archived prior run → {dest}")
+        else:
+            print("a previous run-log exists at .multi-ship/run-log.json — pass "
+                  "--resume to continue it, --fresh to archive it and start over, "
+                  "or remove .multi-ship/ to start fresh", file=sys.stderr)
+            return 2
     result = driver.run_loop(repo=str(repo), specs=specs, cfg=cfg,
                              stop_on_failure=not args.continue_on_failure,
                              state_dir=state_dir, resume=args.resume)

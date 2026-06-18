@@ -56,7 +56,8 @@ Read `.claude/multi-ship.json`. Extract:
 | `roles` | Role→model map passed into the build workflow |
 
 If the file is missing or malformed, stop immediately. Write `item-<id>.json` with
-`status: failed` and `parent_notes: "missing or malformed .claude/multi-ship.json"`.
+`status: failed`, `failure_kind: "config_error"`, and
+`parent_notes: "missing or malformed .claude/multi-ship.json"`.
 Append to HANDOFF *Errors and fixes*. Do not guess config values.
 
 ---
@@ -88,7 +89,8 @@ Workflow({
 **Guard — confirm the right spec was targeted.** After the workflow returns, verify that
 its plan or scout summary names the intended spec. If it planned a different spec or
 returned `verdict: REWORK` (two or more panel lenses blocked it), stop here:
-- Write `item-<id>.json` with `status: failed` and the reason in `parent_notes`.
+- Write `item-<id>.json` with `status: failed`, `failure_kind: "plan_gate_rework"`,
+  and the reason in `parent_notes`.
 - Append to HANDOFF *Errors and fixes* with enough detail that the next session can
   diagnose without re-reading the build transcript.
 - Exit. Do not attempt to push, open a PR, or self-heal the plan.
@@ -135,6 +137,9 @@ empty commit to force a new run, wait for it to complete, then declare cold-gree
 
 If CI fails: read the failing step's log, fix on the branch, push again, wait for a
 completely new CI run to go green. Do not declare cold-green based on a partial re-run.
+If CI cannot reach cold-green (an unresolvable blocker, an infra failure you can't fix
+on the branch), stop: write `item-<id>.json` with `status: failed`,
+`failure_kind: "ci_failed"`, and the blocker in `parent_notes`.
 
 ### 4d. Triage the automated reviewer
 
@@ -175,7 +180,8 @@ a judge rejection):
 7. Append to HANDOFF *Errors and fixes*: the judge's rejection reason + your fix.
 
 If the fix cannot address the rejection without a larger redesign, write `status: failed`
-and stop. The driver will stop the run and notify the operator.
+with `failure_kind: "needs_redesign"` and stop. The driver will stop the run and notify
+the operator.
 
 ---
 
@@ -190,6 +196,7 @@ Write (or overwrite) `.multi-ship/item-<id>.json` with this exact shape:
   "status": "awaiting_judge",
   "pr": "<full GitHub PR URL>",
   "branch": "<branch name>",
+  "failure_kind": "<one of: config_error | plan_gate_rework | ci_failed | needs_redesign; omit on awaiting_judge>",
   "dod": ["<DoD item verbatim from spec>", "..."],
   "files_touched": ["<relative path>", "..."],
   "followups": ["<any follow-up noted in the spec or discovered during build>", "..."],
@@ -201,6 +208,13 @@ Write (or overwrite) `.multi-ship/item-<id>.json` with this exact shape:
 `status` is `"awaiting_judge"` on a successful ship-tail, `"failed"` on any stop
 condition. The `dod` array is what the judge reads — populate it from the spec's
 Definition of Done section verbatim, not from your own assessment of what was done.
+
+`failure_kind` is a closed vocabulary you set ONLY when `status: failed`, per the stop
+site: `config_error` (§1), `plan_gate_rework` (§3), `ci_failed` (§4), `needs_redesign`
+(§5). Omit it on `awaiting_judge`. The driver owns the remaining kinds —
+`judge_rejected` (a cold-judge rejection it can't fix) and `error` (an unexpected
+exception) — so do not set those yourself. `parent_notes` surfaces in the operator
+notification and the `multi-ship status` table; keep it secret-free per §8 hygiene.
 
 ---
 
