@@ -6,6 +6,24 @@ All notable changes to multi-ship will be documented in this file.
 
 ### Added
 
+- **Session-quota guardrails.** Long runs (many REWORK rounds × a multi-agent build
+  each) repeatedly hit the Claude Max/Pro session quota; the driver now handles it
+  gracefully instead of crashing or recording misleading state:
+  - `claude_cli` detects the quota signature in stdout/stderr and raises a distinct
+    `QuotaExhausted(ClaudeError)` carrying the parsed `resets_at`.
+  - A **pre-flight `probe_quota`** (one tiny `claude -p`, fail-open) runs before each
+    item, so an already-shut window pauses *before* a full build is wasted.
+  - Quota exhaustion **pauses cleanly**: the item is left `pending` (never `failed`/a
+    misleading stale kind), the run-log records `paused_reason`/`resets_at`, the
+    notification says so, and `multi-ship` exits **3** (vs 2 for a real failure).
+  - `--wait-for-quota` (opt-in): sleep until the reset (parsed; clamped ≤6h, +60s
+    buffer; ≤8 cycles) and auto-continue — a hands-off multi-window run.
+  - **Fail-soft end-of-run**: `/dream-run` (and any end-of-run `claude -p`) can no
+    longer crash the driver with a traceback (regression: an unwrapped `/dream-run`
+    that hit the quota killed the run on exit 1).
+  - **Stale-item guard**: if `ship-one` returns without rewriting `item-<id>.json`
+    (quota/crash mid-build), the driver raises an honest error instead of recording
+    the prior round's stale status.
 - **Failure taxonomy (`failure_kind`).** A failed item now carries a closed-vocabulary
   `failure_kind` so operators can triage at a glance. `ship-one` sets `config_error`,
   `plan_gate_rework`, `ci_failed`, or `needs_redesign` at its stop sites; the driver

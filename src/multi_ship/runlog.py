@@ -84,6 +84,18 @@ def reset_for_resume(path: Path) -> None:
             it["status"] = "pending"
     _write(path, log)
 
+def force_pending(path: Path, item_id: str, **fields) -> None:
+    """Reset ONE item to `pending`, bypassing the transition machine. Used on a
+    quota pause: the item was not a real failure, so it must not be left in a
+    misleading non-pending status — `--resume` should retry it cleanly. Optional
+    `fields` (e.g. paused_reason / resets_at) are recorded on the item for the
+    notification, then cleared on the next successful transition."""
+    log = read_run_log(path)
+    it = _find(log, item_id)
+    it["status"] = "pending"
+    it.update(fields)
+    _write(path, log)
+
 def _section_body(text: str, heading: str) -> str:
     lines = text.splitlines()
     out, capture = [], False

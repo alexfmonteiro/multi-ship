@@ -481,3 +481,88 @@ def test_item_id_uses_filename_not_full_path(tmp_path, monkeypatch):
     result = driver.run_loop(repo=str(tmp_path), specs=["docs/specs/x.md"], cfg=_cfg(),
                              stop_on_failure=True, state_dir=state)
     assert result["shipped"] == ["docs/specs/x.md"]
+
+
+# --- session-quota guardrails ----------------------------------------------
+
+def test_quota_preflight_pauses_clean_without_building(tmp_path, monkeypatch):
+    """Pre-flight probe says the quota is out -> pause cleanly, never call
+    ship-one, leave the item PENDING (not failed) for a clean --resume."""
+    state = tmp_path / ".multi-ship"
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    monkeypatch.setattr(claude_cli, "probe_quota",
+                        lambda repo: (False, "5:20pm (America/Sao_Paulo)"))
+    def no_build(prompt, repo, timeout=7200):
+        raise AssertionError(f"no claude call expected on a quota pause: {prompt}")
+    monkeypatch.setattr(claude_cli, "run", no_build)
+
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == []
+    assert result["stopped_at"] is None
+    assert result["paused"]["item"] == "a.md"
+    assert result["paused"]["resets_at"] == "5:20pm (America/Sao_Paulo)"
+    log = json.loads((state / "run-log.json").read_text())
+    assert log["items"][0]["status"] == "pending"  # NOT failed/plan_gate_rework
+
+def test_dream_run_failure_is_non_fatal(tmp_path, monkeypatch):
+    """A /dream-run that hits the quota (or any error) must NOT crash the run."""
+    state = tmp_path / ".multi-ship"
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: None)
+    monkeypatch.setattr(claude_cli, "probe_quota", lambda repo: (True, None))
+    monkeypatch.setattr(driver.runlog, "worth_dreaming", lambda log, txt: True)
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "b"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            (state / "verdict-a.md.json").write_text(json.dumps({"ok": True, "reason": "ok"}))
+            return {"result": "judged"}
+        if prompt == "/dream-run":
+            raise claude_cli.QuotaExhausted("quota", resets_at="5pm")
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == ["a.md"]  # the dream-run crash did NOT kill the run
+
+def test_wait_for_quota_retries_then_ships(tmp_path, monkeypatch):
+    """--wait-for-quota: first probe is out, _wait_for_quota returns True, the
+    re-probe succeeds, and the item ships in the same invocation."""
+    state = tmp_path / ".multi-ship"
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: None)
+    monkeypatch.setattr(driver, "_wait_for_quota", lambda resets, repo: True)
+    probes = {"n": 0}
+    def fake_probe(repo):
+        probes["n"] += 1
+        return (False, "5pm") if probes["n"] == 1 else (True, None)
+    monkeypatch.setattr(claude_cli, "probe_quota", fake_probe)
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "b"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            (state / "verdict-a.md.json").write_text(json.dumps({"ok": True, "reason": "ok"}))
+            return {"result": "judged"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state, wait_for_quota=True)
+    assert result["shipped"] == ["a.md"]
+    assert result["paused"] is None
+    assert probes["n"] == 2  # paused once, retried after the (faked) wait
+
+def test_seconds_until_reset_parses_tz_phrase():
+    secs = driver._seconds_until_reset("5:20pm (America/Sao_Paulo)")
+    assert secs is not None and 0 < secs <= 24 * 3600
+    assert driver._seconds_until_reset("not a time") is None
+    assert driver._seconds_until_reset(None) is None

@@ -32,6 +32,14 @@ multi-ship docs/specs/*.md
 
 > **Demo:** _(asciinema cast coming — see [docs/demo.md](docs/demo.md) to record one)._
 
+> **Spec-driven by design — the specs must already exist.** multi-ship is an
+> *executor* of specs, not an ideation tool: it builds, ships, and merges work
+> that is already written down as decision-complete spec files on disk (one file
+> per item, each with a Definition of Done and an `Issue:` reference). It never
+> invents work. Before a run you write the specs (or generate them however you
+> like), point multi-ship at those files, and `multi-ship preflight <specs…>`
+> gates that each one is ready. No spec file ⇒ nothing for multi-ship to do.
+
 ---
 
 ## Is this for me?
@@ -195,6 +203,22 @@ Flags:
 | `--fresh` | Archive any existing `run-log.json` to `.multi-ship/archive/<timestamp>/` and start a brand-new run. Forces the archive even when the prior run is non-terminal or the backlog is unchanged. Never combined with `--resume` (resume wins and never archives) |
 | `--repo <path>` | Repo root (default: current working directory) |
 | `--issue N` | Resolve GitHub issue N to its spec file and add it to the run list (repeatable) |
+| `--wait-for-quota` | When the Claude session quota is exhausted, sleep until it resets (parsed from Claude's message, clamped to ≤6h, +60s buffer) and continue automatically — a hands-off multi-window run. Default off: pause cleanly and exit 3 for a manual `--resume`. |
+
+### Session-quota handling & exit codes
+
+A long run (many REWORK rounds × a multi-agent build each) can exhaust the Claude
+Max/Pro session quota. The driver handles this gracefully:
+
+- A **pre-flight probe** (one tiny `claude -p`) runs before each item; if the quota
+  window is already shut it **pauses before** spending a full multi-agent build that
+  would only half-finish.
+- Quota exhaustion **never marks an item failed** and **never crashes** the driver
+  (including at the end-of-run `/dream-run`, which is now fail-soft). The paused item
+  is left `pending` for a clean `--resume`.
+
+Exit codes: **0** clean finish · **2** stopped on a real item failure · **3** paused on
+session-quota exhaustion (transient — re-run with `--resume`, or use `--wait-for-quota`).
 
 Subcommands:
 
@@ -298,6 +322,11 @@ multi-ship <specs...>  →  driver:
   init run-log (fail-closed, before item 1) + empty HANDOFF.md
 
   for spec in order:
+    0. pre-flight quota probe (one tiny claude -p)
+          ↳ session quota already exhausted? → pause cleanly (item stays
+            pending, exit 3) — or, with --wait-for-quota, sleep to reset
+            and continue. Never burns a doomed multi-agent build.
+
     1. claude -p "/ship-one <spec>"
           ↳ reads HANDOFF.md first
           ↳ builds via {build_workflow}
@@ -346,7 +375,7 @@ All per-run state lives in `.multi-ship/` at the repo root (gitignored):
 
 | File | Contents |
 |---|---|
-| `run-log.json` | Ordered item list, per-item status, stop-on-failure setting, notification surface. Written fail-closed before item 1. |
+| `run-log.json` | Ordered item list, per-item status, stop-on-failure setting, notification surface. Written fail-closed before item 1. A quota pause records `paused_reason`/`resets_at` on the item (kept `pending`). |
 | `HANDOFF.md` | Fixed-schema append-only doc shared across all items: *Discovered knowledge*, *Errors and fixes*, *Live resources*, *Design decisions*, *Open notes*. |
 | `item-<id>.json` | Per-item report written by `ship-one`: status, PR URL, branch, DoD array, files touched, follow-ups, CI tail, parent notes, and (on failure) a `failure_kind`. |
 | `verdict-<id>.json` | Per-item judge verdict written by `judge-shipped`: `{ok, reason}`. |

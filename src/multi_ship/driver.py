@@ -1,14 +1,74 @@
 """The orchestration loop. Dumb: routes only on item/verdict JSON files."""
 from __future__ import annotations
 import json
+import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import claude_cli, runlog, handoff, endrun, notify_telegram
 from .config import Config
+
+try:  # zoneinfo is stdlib 3.9+, but stay fail-soft if the tz db is missing
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore[assignment]
+
+# --wait-for-quota guards
+_MAX_QUOTA_WAIT_S = 6 * 3600     # never sleep more than 6h on one reset
+_QUOTA_FALLBACK_WAIT_S = 1800    # unparseable reset phrase -> re-probe in 30 min
+_MAX_WAIT_CYCLES = 8             # backstop against an infinite wait loop
+
+_RESET_TIME_RE = re.compile(
+    r"(\d{1,2})(?::(\d{2}))?\s*([ap]m)?\s*(?:\(([^)]+)\))?", re.I)
+
+def _seconds_until_reset(resets_at: str | None) -> int | None:
+    """Best-effort parse of a quota-reset phrase ("5:20pm (America/Sao_Paulo)",
+    "11:20am", "5pm") -> seconds from now until that time. None if unparseable.
+    Honours a named tz when present and resolvable; else uses local time."""
+    if not resets_at:
+        return None
+    m = _RESET_TIME_RE.search(resets_at)
+    if not m or not m.group(1):
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2) or 0)
+    ampm, tzname = (m.group(3) or "").lower(), m.group(4)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    if ampm == "pm" and hour != 12:
+        hour += 12
+    elif ampm == "am" and hour == 12:
+        hour = 0
+    tz = None
+    if tzname and ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tzname.strip())
+        except Exception:
+            tz = None
+    now = datetime.now(tz)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return int((target - now).total_seconds())
+
+def _wait_for_quota(resets_at: str | None, repo: str) -> bool:
+    """Sleep until the quota reset (clamped to [60s, 6h], +60s buffer), then
+    re-probe. Returns True iff the quota is available afterward. Only called when
+    --wait-for-quota is set."""
+    secs = _seconds_until_reset(resets_at)
+    secs = _QUOTA_FALLBACK_WAIT_S if secs is None else secs + 60
+    secs = min(max(secs, 60), _MAX_QUOTA_WAIT_S)
+    sys.stderr.write(
+        f"multi-ship: session quota exhausted; --wait-for-quota sleeping {secs}s"
+        + (f" (resets {resets_at})" if resets_at else "") + " then re-probing...\n")
+    time.sleep(secs)
+    available, _ = claude_cli.probe_quota(repo)
+    return available
 
 def _stay_awake_cmd() -> list[str] | None:
     """Return a long-running command that blocks system sleep on this OS, or
@@ -99,7 +159,8 @@ def _fix_prompt(sid: str, reason: str) -> str:
     return f'/ship-one {sid} --fix "{safe}"'
 
 def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
-             state_dir: Path, resume: bool = False) -> dict:
+             state_dir: Path, resume: bool = False,
+             wait_for_quota: bool = False) -> dict:
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     run_log = state_dir / "run-log.json"
@@ -114,17 +175,54 @@ def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
 
     caf = _caffeinate()
     shipped, stopped_at, attempted = [], None, set()
+    paused = None  # set to {"item", "resets_at"} when we stop on quota
+    wait_cycles = 0
+
+    def _on_quota(sid: str, resets_at: str | None) -> str:
+        """Shared quota handling. Returns 'retry' (waited, quota back — re-loop),
+        or 'pause' (stop cleanly). Never marks the item failed: quota is not an
+        item failure, so the item is left/reset to pending for a clean --resume."""
+        nonlocal wait_cycles, paused
+        try:
+            runlog.force_pending(run_log, sid, failure_kind=None,
+                                 paused_reason="quota_exhausted", resets_at=resets_at)
+        except (runlog.StatusError, KeyError):
+            pass
+        if wait_for_quota and wait_cycles < _MAX_WAIT_CYCLES:
+            wait_cycles += 1
+            if _wait_for_quota(resets_at, repo):
+                return "retry"
+        paused = {"item": sid, "resets_at": resets_at}
+        return "pause"
+
     try:
         log = runlog.read_run_log(run_log)
         while True:
             sid = runlog.next_item(log, skip=attempted)
             if sid is None:
                 break
+            # Pre-flight quota probe: surface exhaustion BEFORE spending a full
+            # multi-agent build that the inner workflow would only half-finish
+            # and report ambiguously. Cheap (one tiny claude -p), fail-open.
+            available, resets_at = claude_cli.probe_quota(repo)
+            if not available:
+                if _on_quota(sid, resets_at) == "retry":
+                    log = runlog.read_run_log(run_log)
+                    continue
+                break
             attempted.add(sid)
             try:
                 ok = _process_item(sid, repo, cfg, state_dir, run_log)
+            except claude_cli.QuotaExhausted as q:
+                # Quota ran out mid-item (e.g. during judge/complete). Not a
+                # failure — pause/retry cleanly; the item is reset to pending.
+                attempted.discard(sid)
+                if _on_quota(sid, q.resets_at) == "retry":
+                    log = runlog.read_run_log(run_log)
+                    continue
+                break
             except Exception as e:
-                # ANY failure in an item (missing skill file, claude -p error, a
+                # ANY other failure (missing skill file, claude -p error, a
                 # genuine un-mergeable PR, an unexpected state) must fail just that
                 # item and keep the run alive so end-of-run/notify still fires — a
                 # single item must never crash the whole driver via an unhandled
@@ -142,10 +240,11 @@ def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
                 if runlog.should_stop(log, item_failed=True):
                     stopped_at = sid
                     break
-        _end_of_run(repo, cfg, state_dir, run_log, shipped, stopped_at, baseline)
+        _end_of_run(repo, cfg, state_dir, run_log, shipped, stopped_at, baseline,
+                    paused=paused)
     finally:
         _kill_caffeinate(caf)
-    return {"shipped": shipped, "stopped_at": stopped_at}
+    return {"shipped": shipped, "stopped_at": stopped_at, "paused": paused}
 
 def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Path) -> bool:
     # State files are keyed by the spec FILENAME (the skill contract), not the
@@ -167,9 +266,19 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
             claude_cli.run(cfg.complete_cmd.format(slug=Path(sid).stem), repo=repo)
             runlog.set_item_status(run_log, sid, "shipped")
             return True
-    # Build + ship-tail → ship-one writes item-<filename>.json, pauses before merge
+    # Build + ship-tail → ship-one writes item-<filename>.json, pauses before merge.
+    # Stamp the time first so we can detect a STALE report: if ship-one returns
+    # but never rewrites item-<id>.json (a quota/crash mid-build can leave the
+    # prior round's file in place), reading it would record a misleading status
+    # (e.g. a stale plan_gate_rework). Treat "no fresh report" as an honest error.
+    item_path = state_dir / f"item-{iid}.json"
+    before = item_path.stat().st_mtime if item_path.exists() else 0.0
     claude_cli.run(f"/ship-one {sid}", repo=repo)
-    item = _read_json(state_dir / f"item-{iid}.json")
+    if not item_path.exists() or item_path.stat().st_mtime <= before:
+        raise claude_cli.ClaudeError(
+            f"ship-one produced no fresh item report for {iid} "
+            "(stale/unchanged item-<id>.json — likely quota or crash mid-build)")
+    item = _read_json(item_path)
     if item.get("status") == "failed":
         fields = {k: item.get(k) for k in ("pr", "parent_notes") if item.get(k)}
         fields["failure_kind"] = item.get("failure_kind") or "unknown"
@@ -203,11 +312,18 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
     return False
 
 def _end_of_run(repo: str, cfg: Config, state_dir: Path, run_log: Path,
-                shipped: list, stopped_at, baseline: dict):
+                shipped: list, stopped_at, baseline: dict, paused: dict | None = None):
     log = runlog.read_run_log(run_log)
     handoff_text = (state_dir / "HANDOFF.md").read_text()
-    if runlog.worth_dreaming(log, handoff_text):
-        claude_cli.run("/dream-run", repo=repo)
+    # dream-run is OPTIONAL end-of-run consolidation — it must NEVER crash the
+    # driver. (Regression: an unwrapped /dream-run that hit the session quota
+    # raised QuotaExhausted past the loop's handlers and killed the run with a
+    # traceback.) Skip it entirely if we're pausing on quota — the window is shut.
+    if paused is None and runlog.worth_dreaming(log, handoff_text):
+        try:
+            claude_cli.run("/dream-run", repo=repo)
+        except claude_cli.ClaudeError as e:
+            sys.stderr.write(f"multi-ship: /dream-run skipped (non-fatal): {e}\n")
     reports = endrun.read_item_reports(state_dir)
     followups = endrun.collect_followups(reports)
     followups_path = None
@@ -225,6 +341,12 @@ def _end_of_run(repo: str, cfg: Config, state_dir: Path, run_log: Path,
     msg = endrun.format_notification(shipped, stopped_at, followups, str(run_log),
                                      followups_path, stop_kind=stop_kind,
                                      stop_notes=stop_notes)
+    if paused:
+        resets = paused.get("resets_at")
+        msg += ("\n\nPAUSED — Claude session quota exhausted"
+                + (f" (resets {resets})" if resets else "")
+                + f".\nItem left pending: {paused.get('item')}. "
+                "Re-run with --resume after the reset to continue.")
     if problems:
         msg += "\n\nWARNING — parent checkout changed unexpectedly:\n" + "\n".join(f"  - {p}" for p in problems)
     if cfg.notify == "telegram":

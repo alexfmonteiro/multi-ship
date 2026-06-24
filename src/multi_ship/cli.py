@@ -231,6 +231,10 @@ def main(argv=None) -> int:
     p.add_argument("--resume", action="store_true")
     p.add_argument("--fresh", action="store_true")
     p.add_argument("--issue", action="append", type=int, default=None)
+    p.add_argument("--wait-for-quota", action="store_true",
+                   help="when the Claude session quota is exhausted, sleep until "
+                        "it resets and continue automatically (hands-off "
+                        "multi-window run) instead of pausing for a manual --resume")
     args = p.parse_args(argv)
 
     repo = Path(args.repo).resolve()
@@ -267,8 +271,19 @@ def main(argv=None) -> int:
             return 2
     result = driver.run_loop(repo=str(repo), specs=specs, cfg=cfg,
                              stop_on_failure=not args.continue_on_failure,
-                             state_dir=state_dir, resume=args.resume)
+                             state_dir=state_dir, resume=args.resume,
+                             wait_for_quota=args.wait_for_quota)
     print(f"shipped: {result['shipped']}  stopped_at: {result['stopped_at']}")
+    # Exit-code contract: 0 = clean finish, 2 = stopped on a real item failure,
+    # 3 = paused on session-quota exhaustion (transient — re-run with --resume).
+    paused = result.get("paused")
+    if paused:
+        resets = paused.get("resets_at")
+        print(f"paused: session quota exhausted"
+              + (f" (resets {resets})" if resets else "")
+              + f" — item '{paused.get('item')}' left pending; re-run with --resume",
+              file=sys.stderr)
+        return 3
     return 0 if result["stopped_at"] is None else 2
 
 if __name__ == "__main__":
