@@ -566,3 +566,76 @@ def test_seconds_until_reset_parses_tz_phrase():
     assert secs is not None and 0 < secs <= 24 * 3600
     assert driver._seconds_until_reset("not a time") is None
     assert driver._seconds_until_reset(None) is None
+
+# ---------------------------------------------------------------------------
+# Judge fail-open: a judge crash or a judge that writes no fresh verdict must
+# NOT fail the item — README contract: "judge error → fail-open: log, proceed".
+# Quota during the judge still pauses (it is not a judge failure).
+# ---------------------------------------------------------------------------
+
+def test_judge_crash_fails_open_and_merges(tmp_path, monkeypatch):
+    state = tmp_path / ".multi-ship"
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            raise claude_cli.ClaudeError("judge session crashed")
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    merges = []
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: merges.append(pr))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == ["a.md"]
+    assert merges == ["http://pr/1"]
+
+def test_judge_writes_no_fresh_verdict_fails_open(tmp_path, monkeypatch):
+    """Judge session returns fine but never (re)writes verdict-<id>.json: a STALE
+    verdict from a prior round must not be trusted — fail-open instead."""
+    state = tmp_path / ".multi-ship"; state.mkdir(parents=True)
+    # Stale verdict from a previous round, saying REJECT. It must be ignored.
+    (state / "verdict-a.md.json").write_text(json.dumps({"ok": False, "reason": "old"}))
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            return {"result": "judged but wrote nothing"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    merges = []
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: merges.append(pr))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == ["a.md"]  # fail-open, not judge_rejected via stale file
+    assert merges == ["http://pr/1"]
+
+def test_quota_during_judge_still_pauses(tmp_path, monkeypatch):
+    state = tmp_path / ".multi-ship"
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            raise claude_cli.QuotaExhausted("quota", resets_at="5pm")
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(claude_cli, "probe_quota", lambda repo: (True, None))
+    monkeypatch.setattr(driver, "_merge_pr",
+                        lambda pr, repo: (_ for _ in ()).throw(AssertionError("no merge")))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == []
+    assert result["paused"]["item"] == "a.md"
+    log = json.loads((state / "run-log.json").read_text())
+    assert log["items"][0]["status"] == "pending"

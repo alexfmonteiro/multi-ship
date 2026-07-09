@@ -246,6 +246,34 @@ def run_loop(repo: str, specs: list[str], cfg: Config, stop_on_failure: bool,
         _kill_caffeinate(caf)
     return {"shipped": shipped, "stopped_at": stopped_at, "paused": paused}
 
+def _judge_verdict(sid: str, iid: str, pr: str, repo: str, state_dir: Path) -> dict:
+    """Run the cold judge and return a FRESH verdict dict.
+
+    Fail-open per the documented contract (README: a flaky judge can't trap a
+    good run): a judge crash, an unreadable verdict, or a judge session that
+    returns without rewriting verdict-<id>.json all yield {ok: true} with a
+    fail-open reason. Freshness is checked by mtime so a stale verdict from a
+    prior round is never trusted. Quota exhaustion is NOT a judge failure — it
+    propagates so the driver pauses cleanly."""
+    vpath = state_dir / f"verdict-{iid}.json"
+    before = vpath.stat().st_mtime_ns if vpath.exists() else 0
+    try:
+        claude_cli.run(f"/judge-shipped {sid} {pr}", repo=repo)
+    except claude_cli.QuotaExhausted:
+        raise
+    except claude_cli.ClaudeError as e:
+        sys.stderr.write(f"multi-ship: judge run for {iid} failed — fail-open: {e}\n")
+        return {"ok": True, "reason": f"judge could not run — fail-open: {str(e)[:200]}"}
+    if not vpath.exists() or vpath.stat().st_mtime_ns <= before:
+        sys.stderr.write(
+            f"multi-ship: judge wrote no fresh verdict for {iid} — fail-open\n")
+        return {"ok": True, "reason": "judge produced no fresh verdict — fail-open"}
+    try:
+        return _read_json(vpath)
+    except (json.JSONDecodeError, OSError) as e:
+        sys.stderr.write(f"multi-ship: unreadable verdict for {iid} — fail-open: {e}\n")
+        return {"ok": True, "reason": f"unreadable verdict — fail-open: {str(e)[:200]}"}
+
 def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Path) -> bool:
     # State files are keyed by the spec FILENAME (the skill contract), not the
     # full spec path — a path like docs/specs/x.md would otherwise become a
@@ -272,9 +300,9 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
     # prior round's file in place), reading it would record a misleading status
     # (e.g. a stale plan_gate_rework). Treat "no fresh report" as an honest error.
     item_path = state_dir / f"item-{iid}.json"
-    before = item_path.stat().st_mtime if item_path.exists() else 0.0
+    before = item_path.stat().st_mtime_ns if item_path.exists() else 0
     claude_cli.run(f"/ship-one {sid}", repo=repo)
-    if not item_path.exists() or item_path.stat().st_mtime <= before:
+    if not item_path.exists() or item_path.stat().st_mtime_ns <= before:
         raise claude_cli.ClaudeError(
             f"ship-one produced no fresh item report for {iid} "
             "(stale/unchanged item-<id>.json — likely quota or crash mid-build)")
@@ -288,8 +316,7 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
 
     # Cold judge, with one fix retry
     for attempt in range(2):
-        claude_cli.run(f"/judge-shipped {sid} {item.get('pr','')}", repo=repo)
-        verdict = _read_json(state_dir / f"verdict-{iid}.json")
+        verdict = _judge_verdict(sid, iid, item.get("pr", ""), repo, state_dir)
         if verdict.get("ok"):
             # Remove the build worktree first so it stops leaking AND can't hold
             # the branch open against `gh pr merge --delete-branch`.
