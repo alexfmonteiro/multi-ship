@@ -52,7 +52,13 @@ def _raw_run(cmd: list[str], cwd: str, timeout: int):
 
 def run(prompt: str, repo: str, timeout: int = 7200) -> dict:
     cmd = build_command(prompt, repo)
-    code, out, err = _raw_run(cmd, cwd=repo, timeout=timeout)
+    try:
+        code, out, err = _raw_run(cmd, cwd=repo, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        # A hung `claude -p` (slow MCP init, network stall) must surface as a
+        # normal ClaudeError so callers' fail-open / per-item handling applies —
+        # never as a raw TimeoutExpired that crashes the driver loop.
+        raise ClaudeError(f"claude -p timed out after {timeout}s") from e
     if code != 0:
         is_quota, resets_at = detect_quota(out, err)
         if is_quota:

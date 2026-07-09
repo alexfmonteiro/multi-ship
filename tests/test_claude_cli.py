@@ -1,6 +1,7 @@
 # tests/test_claude_cli.py
 import json
 import pytest
+import subprocess
 from multi_ship import claude_cli
 
 def test_build_command_invokes_skill_and_json_output():
@@ -63,4 +64,20 @@ def test_probe_quota_exhausted(monkeypatch):
 def test_probe_quota_failopen_on_other_error(monkeypatch):
     # a flaky/non-quota error must NOT falsely pause a run that could proceed
     monkeypatch.setattr(claude_cli, "_raw_run", lambda cmd, cwd, timeout: (1, "", "network boom"))
+    assert claude_cli.probe_quota("/repo") == (True, None)
+
+# --- timeout handling --------------------------------------------------------
+
+def test_run_timeout_raises_claude_error(monkeypatch):
+    def fake_raw(cmd, cwd, timeout):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+    monkeypatch.setattr(claude_cli, "_raw_run", fake_raw)
+    with pytest.raises(claude_cli.ClaudeError, match="timed out"):
+        claude_cli.run("/ship-one x", repo="/repo")
+
+def test_probe_quota_failopen_on_timeout(monkeypatch):
+    """A hung probe must fail-open (True), never crash the driver."""
+    def fake_raw(cmd, cwd, timeout):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+    monkeypatch.setattr(claude_cli, "_raw_run", fake_raw)
     assert claude_cli.probe_quota("/repo") == (True, None)
