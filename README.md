@@ -1,26 +1,38 @@
 # multi-ship
 
-**Ship a backlog of specs autonomously on Claude Code — one fresh context per item.**
+**Ship a spec backlog autonomously on Claude Code — with an independent cold judge gating every merge.**
 
 [![CI](https://github.com/alexfmonteiro/multi-ship/actions/workflows/test.yml/badge.svg)](https://github.com/alexfmonteiro/multi-ship/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 
-Long autonomous Claude Code sessions rot. After a handful of work items the
-session is bloated, drags stale reasoning from earlier items into new ones, and
-a single crash wipes all progress. And here's the catch: **a Claude Code session
-cannot clear or compact its own context.** `/clear` and `/compact` are user-only
-gestures; hooks can't spawn sessions; `--resume` and `--continue` reuse the old
-history. The only guaranteed reset is a fresh `claude -p` invocation.
+In the orchestration era, the bottleneck stopped being code generation and became
+**verification**. Autonomous agents open PRs faster than any human can decide
+whether to trust them — review time balloons, unread merges become normal, and
+"agent slop" (code that compiles but carries no recoverable intent) piles up. The
+hard part of unattended shipping isn't writing the diff; it's deciding, for each
+one, whether the work *actually shipped*.
 
-**multi-ship inverts the loop.** It moves orchestration out of the Claude session
-into a thin Python driver and gives **every work item its own `claude -p` — a
-clean slate, like an automatic `/clear` between items.** Cross-item memory lives
-on disk in a fixed-schema handoff doc. Before each merge, an independent **cold
-judge** (a separate `claude -p` that sees only the spec's Definition of Done and
-the PR diff) decides whether the work actually shipped. The driver is dumb — it
-routes only on status/verdict files and never reasons about code. Every decision
-that needs judgment is a fresh, cold model call.
+**multi-ship puts a gate in front of every merge.** Before anything lands, an
+independent **cold judge** — a separate `claude -p` that sees *only* the spec's
+Definition of Done, the PR diff, and CI status, never the builder's transcript —
+votes ok / not-ok. The driver merges on approval and **never merges red**. The
+model that wrote the code can't talk the judge into accepting it.
+
+The other half of the design is keeping each build clean in the first place. Long
+autonomous Claude Code sessions **rot**: after a handful of items the context is
+bloated, stale reasoning bleeds between tasks, and a single crash wipes all
+progress. And a session **cannot clear or compact its own context** — `/clear` and
+`/compact` are user-only gestures; hooks can't spawn sessions; `--resume` and
+`--continue` reuse the old history. The only guaranteed reset is a fresh
+`claude -p`. So multi-ship **inverts the loop**: orchestration moves out of the
+session into a thin Python driver, and **every work item gets its own `claude -p` —
+a clean slate, like an automatic `/clear` between items.** Cross-item memory lives
+on disk in a fixed-schema handoff doc, not in a bloated context window.
+
+The driver is deliberately dumb — it routes only on status/verdict files and never
+reasons about code. **Every decision that needs judgment is a fresh, cold model
+call; everything deterministic is boring Python.** That split is the whole design.
 
 ```text
 multi-ship docs/specs/*.md
@@ -32,8 +44,11 @@ multi-ship docs/specs/*.md
 
 > **Demo:** _(asciinema cast coming — see [docs/demo.md](docs/demo.md) to record one)._
 
-> **Spec-driven by design — the specs must already exist.** multi-ship is an
-> *executor* of specs, not an ideation tool: it builds, ships, and merges work
+> **Spec-driven by design — the specs must already exist.** Spec-driven
+> development (SDD) is the credible-engineering answer to vibe-coded slop: the spec
+> is the source of truth and its Definition of Done becomes an executable merge
+> gate. multi-ship is the *executor* end of that workflow, not an ideation tool: it
+> builds, ships, and merges work
 > that is already written down as decision-complete spec files on disk (one file
 > per item, each with a Definition of Done and an `Issue:` reference). It never
 > invents work. Before a run you write the specs (or generate them however you
@@ -247,7 +262,7 @@ Actions instead of tying up your laptop — see
 
 | Key | Purpose | Substitution |
 |---|---|---|
-| `build_workflow` | Name of the Claude Code workflow that does the build (default: `"mixed-model-burst"`). Must be present in `.claude/workflows/`. | — |
+| `build_workflow` | Name of the Claude Code workflow that does the build (default: `"mixed-model-burst"`). Must be present in `.claude/workflows/` — `multi-ship init` installs the bundled copy there. | — |
 | `spec_glob` | Glob used when `multi-ship` is invoked without explicit spec paths (e.g. `"docs/specs/*.md"`). | — |
 | `verify` | Shell command to cold-verify CI for a PR. Run after every push; must block until all checks complete. | `$PR` → PR number (bare integer) |
 | `notify` | How to deliver the end-of-run summary. Three routings: `"telegram"` — built-in stdlib Telegram bot (reads credentials from env / `.env`, no extra packages); `"none"` or `""` — no-op; any other string — treated as a shell command with the message passed on stdin (e.g. `"cat"`, `"jq -r '.'"`, a custom webhook script). | For the shell path, message text is piped to stdin. |
@@ -343,7 +358,7 @@ multi-ship <specs...>  →  driver:
           ↳ writes .multi-ship/verdict-<id>.json {ok, reason}
           ok=false → driver re-dispatches /ship-one --fix "<reason>" → re-judge
           still ok=false after 1 retry → stop + notify (nothing merged)
-          judge error → fail-open: log, proceed
+          judge error / no fresh verdict → fail-open: log, proceed to merge
 
     4. driver merges (deterministic shell):
           gh pr merge --squash --delete-branch
