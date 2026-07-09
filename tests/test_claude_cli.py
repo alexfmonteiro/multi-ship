@@ -81,3 +81,24 @@ def test_probe_quota_failopen_on_timeout(monkeypatch):
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
     monkeypatch.setattr(claude_cli, "_raw_run", fake_raw)
     assert claude_cli.probe_quota("/repo") == (True, None)
+
+# --- is_error payloads on exit 0 ---------------------------------------------
+
+def test_run_exit0_is_error_raises_claude_error(monkeypatch):
+    fake = json.dumps({"is_error": True, "result": "something broke mid-session"})
+    monkeypatch.setattr(claude_cli, "_raw_run", lambda cmd, cwd, timeout: (0, fake, ""))
+    with pytest.raises(claude_cli.ClaudeError, match="something broke"):
+        claude_cli.run("/x", repo="/repo")
+
+def test_run_exit0_is_error_quota_raises_quota_exhausted(monkeypatch):
+    fake = json.dumps({"is_error": True,
+                       "result": "You've hit your session limit · resets 5:20pm (America/Sao_Paulo)"})
+    monkeypatch.setattr(claude_cli, "_raw_run", lambda cmd, cwd, timeout: (0, fake, ""))
+    with pytest.raises(claude_cli.QuotaExhausted) as exc:
+        claude_cli.run("/x", repo="/repo")
+    assert exc.value.resets_at == "5:20pm (America/Sao_Paulo)"
+
+def test_run_exit0_without_is_error_still_returns_payload(monkeypatch):
+    fake = json.dumps({"is_error": False, "result": "done"})
+    monkeypatch.setattr(claude_cli, "_raw_run", lambda cmd, cwd, timeout: (0, fake, ""))
+    assert claude_cli.run("/x", repo="/repo")["result"] == "done"
