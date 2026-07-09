@@ -60,3 +60,34 @@ def test_reset_for_resume_nonterminal_and_failed_to_pending(tmp_path):
     reset_for_resume(p)
     st = {i["id"]: i["status"] for i in read_run_log(p)["items"]}
     assert st == {"a.md": "shipped", "b.md": "pending", "c.md": "pending", "d.md": "pending"}
+
+# --- transient fields are cleared on every transition ------------------------
+
+def test_transition_clears_stale_transient_fields(tmp_path):
+    p = tmp_path / "run-log.json"
+    init_run_log(p, order=["a.md"], stop_on_failure=True, notification_surface="none")
+    set_item_status(p, "a.md", "awaiting_judge", pr="http://pr/1")
+    set_item_status(p, "a.md", "needs_fix", judge_reason="missing test")
+    set_item_status(p, "a.md", "awaiting_judge", pr="http://pr/1")
+    set_item_status(p, "a.md", "shipped")
+    it = read_run_log(p)["items"][0]
+    assert it["status"] == "shipped"
+    assert "judge_reason" not in it, "stale rejection text must not survive a ship"
+
+def test_force_pending_fields_cleared_on_next_transition(tmp_path):
+    from multi_ship.runlog import force_pending
+    p = tmp_path / "run-log.json"
+    init_run_log(p, order=["a.md"], stop_on_failure=True, notification_surface="none")
+    force_pending(p, "a.md", paused_reason="quota_exhausted", resets_at="5pm")
+    it = read_run_log(p)["items"][0]
+    assert it["paused_reason"] == "quota_exhausted" and it["resets_at"] == "5pm"
+    set_item_status(p, "a.md", "awaiting_judge", pr="http://pr/1")
+    it = read_run_log(p)["items"][0]
+    assert "paused_reason" not in it and "resets_at" not in it
+
+def test_write_leaves_no_tmp_files(tmp_path):
+    p = tmp_path / "run-log.json"
+    init_run_log(p, order=["a.md"], stop_on_failure=True, notification_surface="none")
+    set_item_status(p, "a.md", "awaiting_judge")
+    leftovers = [f for f in p.parent.iterdir() if f.name != "run-log.json"]
+    assert leftovers == []

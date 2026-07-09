@@ -193,6 +193,10 @@ def _resolve_token(token: str, spec_dir: str, repo: Path, results: List[str]) ->
             str(p.relative_to(repo))
             for p in Path(repo).glob(token)
         )
+        if not matches:
+            raise ResolveError(
+                f"glob '{token}' matched no files in repo '{repo}'"
+            )
         results.extend(matches)
         return
 

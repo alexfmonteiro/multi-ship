@@ -504,3 +504,12 @@ class TestGlobAndOrder:
         rc = cli.main(["--repo", str(tmp_path)])
         assert rc != 0
         assert called == []
+
+
+def test_glob_with_zero_matches_raises(tmp_path):
+    from multi_ship.resolve import resolve_specs, ResolveError
+    (tmp_path / "docs" / "specs").mkdir(parents=True)
+    (tmp_path / "docs" / "specs" / "P14.md").write_text("# P14")
+    with pytest.raises(ResolveError, match="matched no files"):
+        resolve_specs(tokens=["docs/spces/P1*.md"], issue_numbers=[],
+                      cfg=_cfg(), repo=tmp_path)

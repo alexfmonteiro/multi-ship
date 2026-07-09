@@ -4,6 +4,27 @@ All notable changes to multi-ship will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+- A hung `claude -p` (subprocess timeout) is now a per-item `ClaudeError` instead of an
+  uncaught `TimeoutExpired` that crashed the whole run before notification.
+- The documented judge fail-open is now implemented: a judge crash or a judge session
+  that writes no fresh `verdict-<id>.json` logs and proceeds to merge instead of
+  failing the item; stale verdicts from prior rounds are never trusted (mtime guard).
+- The `--fix` path now applies the same fresh-report + failed-status discipline as the
+  first build (a failed fix keeps the builder's `failure_kind`; a crashed fix is an
+  honest error, not a re-judge of stale data).
+- `claude -p` payloads with exit 0 but `is_error: true` (including mid-session quota
+  hits) are treated as failures.
+- Run-log writes are atomic (tmp + rename); per-round fields (`judge_reason`,
+  `paused_reason`, `error`, …) are cleared on every status transition so
+  `multi-ship status` never shows a stale note.
+- A glob token that matches no files raises `ResolveError` instead of silently
+  dropping specs.
+- `multi-ship init` installs the bundled build workflow into `.claude/workflows/`
+  (per DESIGN.md); previously a fresh install could never build.
+- Clean errors for `--repo` without a value, a corrupt `run-log.json` (no longer
+  suggests `--resume`, which would crash), and item reports missing `pr`.
+
 ### Added
 
 - **Session-quota guardrails.** Long runs (many REWORK rounds × a multi-agent build

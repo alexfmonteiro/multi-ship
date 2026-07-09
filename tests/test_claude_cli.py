@@ -1,10 +1,11 @@
 # tests/test_claude_cli.py
 import json
 import pytest
+import subprocess
 from multi_ship import claude_cli
 
 def test_build_command_invokes_skill_and_json_output():
-    cmd = claude_cli.build_command("/ship-one docs/specs/a.md", repo="/repo")
+    cmd = claude_cli.build_command("/ship-one docs/specs/a.md")
     assert cmd[0] == "claude"
     assert "-p" in cmd
     assert "/ship-one docs/specs/a.md" in cmd
@@ -64,3 +65,40 @@ def test_probe_quota_failopen_on_other_error(monkeypatch):
     # a flaky/non-quota error must NOT falsely pause a run that could proceed
     monkeypatch.setattr(claude_cli, "_raw_run", lambda cmd, cwd, timeout: (1, "", "network boom"))
     assert claude_cli.probe_quota("/repo") == (True, None)
+
+# --- timeout handling --------------------------------------------------------
+
+def test_run_timeout_raises_claude_error(monkeypatch):
+    def fake_raw(cmd, cwd, timeout):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+    monkeypatch.setattr(claude_cli, "_raw_run", fake_raw)
+    with pytest.raises(claude_cli.ClaudeError, match="timed out"):
+        claude_cli.run("/ship-one x", repo="/repo")
+
+def test_probe_quota_failopen_on_timeout(monkeypatch):
+    """A hung probe must fail-open (True), never crash the driver."""
+    def fake_raw(cmd, cwd, timeout):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+    monkeypatch.setattr(claude_cli, "_raw_run", fake_raw)
+    assert claude_cli.probe_quota("/repo") == (True, None)
+
+# --- is_error payloads on exit 0 ---------------------------------------------
+
+def test_run_exit0_is_error_raises_claude_error(monkeypatch):
+    fake = json.dumps({"is_error": True, "result": "something broke mid-session"})
+    monkeypatch.setattr(claude_cli, "_raw_run", lambda cmd, cwd, timeout: (0, fake, ""))
+    with pytest.raises(claude_cli.ClaudeError, match="something broke"):
+        claude_cli.run("/x", repo="/repo")
+
+def test_run_exit0_is_error_quota_raises_quota_exhausted(monkeypatch):
+    fake = json.dumps({"is_error": True,
+                       "result": "You've hit your session limit · resets 5:20pm (America/Sao_Paulo)"})
+    monkeypatch.setattr(claude_cli, "_raw_run", lambda cmd, cwd, timeout: (0, fake, ""))
+    with pytest.raises(claude_cli.QuotaExhausted) as exc:
+        claude_cli.run("/x", repo="/repo")
+    assert exc.value.resets_at == "5:20pm (America/Sao_Paulo)"
+
+def test_run_exit0_without_is_error_still_returns_payload(monkeypatch):
+    fake = json.dumps({"is_error": False, "result": "done"})
+    monkeypatch.setattr(claude_cli, "_raw_run", lambda cmd, cwd, timeout: (0, fake, ""))
+    assert claude_cli.run("/x", repo="/repo")["result"] == "done"

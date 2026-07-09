@@ -39,7 +39,9 @@ def detect_quota(*streams: str) -> tuple[bool, str | None]:
     m = _RESETS_RE.search(blob)
     return True, (m.group(1).strip() if m else None)
 
-def build_command(prompt: str, repo: str, permission_mode: str = "bypassPermissions") -> list[str]:
+def build_command(prompt: str, permission_mode: str = "bypassPermissions") -> list[str]:
+    # The repo is NOT part of the command line — `run` sets it as the subprocess
+    # cwd, which is what scopes the claude session to the target checkout.
     return [
         "claude", "-p", prompt,
         "--output-format", "json",
@@ -51,8 +53,14 @@ def _raw_run(cmd: list[str], cwd: str, timeout: int):
     return proc.returncode, proc.stdout, proc.stderr
 
 def run(prompt: str, repo: str, timeout: int = 7200) -> dict:
-    cmd = build_command(prompt, repo)
-    code, out, err = _raw_run(cmd, cwd=repo, timeout=timeout)
+    cmd = build_command(prompt)
+    try:
+        code, out, err = _raw_run(cmd, cwd=repo, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        # A hung `claude -p` (slow MCP init, network stall) must surface as a
+        # normal ClaudeError so callers' fail-open / per-item handling applies —
+        # never as a raw TimeoutExpired that crashes the driver loop.
+        raise ClaudeError(f"claude -p timed out after {timeout}s") from e
     if code != 0:
         is_quota, resets_at = detect_quota(out, err)
         if is_quota:
@@ -61,9 +69,21 @@ def run(prompt: str, repo: str, timeout: int = 7200) -> dict:
                 f"claude -p session quota exhausted{suffix}", resets_at=resets_at)
         raise ClaudeError(f"claude -p exited {code}: {err.strip()[:500]}")
     try:
-        return json.loads(out)
+        data = json.loads(out)
     except json.JSONDecodeError as e:
         raise ClaudeError(f"claude -p returned non-JSON: {out[:500]}") from e
+    # `claude -p --output-format json` can exit 0 while the payload itself says
+    # the session errored (is_error) — including a mid-session quota hit. Treat
+    # that as the failure it is instead of returning it as success.
+    if isinstance(data, dict) and data.get("is_error"):
+        result_text = str(data.get("result", ""))
+        is_quota, resets_at = detect_quota(result_text, err)
+        if is_quota:
+            suffix = f" (resets {resets_at})" if resets_at else ""
+            raise QuotaExhausted(
+                f"claude -p session quota exhausted{suffix}", resets_at=resets_at)
+        raise ClaudeError(f"claude -p reported an error result: {result_text[:500]}")
+    return data
 
 def probe_quota(repo: str, timeout: int = 120) -> tuple[bool, str | None]:
     """Cheap pre-flight check: is the Claude session quota available right now?

@@ -86,6 +86,32 @@ Workflow({
 })
 ```
 
+**Wait for the build IN-TURN — never schedule-and-yield (headless-safe, load-bearing).**
+The `Workflow` tool returns *immediately* with a **Task ID** (e.g. `Task ID: wg6zi1fxu`)
++ a `transcriptDir`; the build runs in the background and its
+`{verdict, built, ships, build, review, ...}` result arrives only on completion. You are running under the multi-ship driver as a **headless
+`claude -p` single-shot** subprocess. In that mode, **ending your turn can exit the
+process and orphan the still-running build** — the driver then finds no fresh
+`item-<id>.json` and marks the item `failed` even though the build was fine. (Observed
+2026-07-02: the scenario-simulator build ran its full scout→plan→judge panel but was
+abandoned because the child called `ScheduleWakeup` and yielded; the process exited before
+re-invocation.) So:
+
+- **Do NOT call `ScheduleWakeup` and end your turn to "await re-invocation."** That path is
+  flaky under `claude -p` and is what caused the orphaned-build failure.
+- **Keep the turn alive by blocking in-turn** until the workflow result is in hand. A
+  foreground tool call cannot let the process exit, so poll to completion with repeated
+  in-turn waits. Preferred: poll the workflow task directly with `TaskGet`/`TaskOutput` on
+  the **Task ID the Workflow tool returned** (or `TaskList`) in a loop until it reports
+  completed, then read its result. Fallback: a
+  foreground `Bash` wait bounded to ≤9 min per call
+  (`until <workflow-done-check>; do sleep 20; done`) **repeated** until done — the build
+  can take 30-60 min, so expect several consecutive waits; that is correct, not a hang.
+- Only once you hold the workflow's returned result object (`built` / `ships` / `branch`)
+  do you proceed to the Guard below and §4. If the workflow returns an error or null,
+  treat it as a build failure (write `item-<id>.json` `status: failed`, `failure_kind:
+  "error"`, reason in `parent_notes`) — do not push or open a PR.
+
 **Guard — confirm the right spec was targeted.** After the workflow returns, verify that
 its plan or scout summary names the intended spec. If it planned a different spec or
 returned `verdict: REWORK` (two or more panel lenses blocked it), stop here:
