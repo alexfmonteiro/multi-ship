@@ -39,7 +39,9 @@ def detect_quota(*streams: str) -> tuple[bool, str | None]:
     m = _RESETS_RE.search(blob)
     return True, (m.group(1).strip() if m else None)
 
-def build_command(prompt: str, repo: str, permission_mode: str = "bypassPermissions") -> list[str]:
+def build_command(prompt: str, permission_mode: str = "bypassPermissions") -> list[str]:
+    # The repo is NOT part of the command line — `run` sets it as the subprocess
+    # cwd, which is what scopes the claude session to the target checkout.
     return [
         "claude", "-p", prompt,
         "--output-format", "json",
@@ -51,7 +53,7 @@ def _raw_run(cmd: list[str], cwd: str, timeout: int):
     return proc.returncode, proc.stdout, proc.stderr
 
 def run(prompt: str, repo: str, timeout: int = 7200) -> dict:
-    cmd = build_command(prompt, repo)
+    cmd = build_command(prompt)
     try:
         code, out, err = _raw_run(cmd, cwd=repo, timeout=timeout)
     except subprocess.TimeoutExpired as e:

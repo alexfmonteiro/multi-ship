@@ -5,7 +5,7 @@ import subprocess
 from multi_ship import claude_cli
 
 def test_build_command_invokes_skill_and_json_output():
-    cmd = claude_cli.build_command("/ship-one docs/specs/a.md", repo="/repo")
+    cmd = claude_cli.build_command("/ship-one docs/specs/a.md")
     assert cmd[0] == "claude"
     assert "-p" in cmd
     assert "/ship-one docs/specs/a.md" in cmd
