@@ -710,3 +710,24 @@ def test_fix_writing_no_fresh_report_fails_item(tmp_path, monkeypatch):
     a = next(it for it in log["items"] if it["id"] == "a.md")
     assert a["status"] == "failed"
     assert a["failure_kind"] == "error"
+
+def test_item_report_without_pr_fails_with_clear_error(tmp_path, monkeypatch):
+    state = tmp_path / ".multi-ship"
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "branch": "spec/a"}))  # no "pr"
+            return {"result": "built"}
+        raise AssertionError(f"no judge call expected without a pr: {prompt}")
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(claude_cli, "probe_quota", lambda repo: (True, None))
+    monkeypatch.setattr(driver, "_merge_pr",
+                        lambda pr, repo: (_ for _ in ()).throw(AssertionError("no merge")))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                    stop_on_failure=True, state_dir=state)
+    log = json.loads((state / "run-log.json").read_text())
+    a = next(it for it in log["items"] if it["id"] == "a.md")
+    assert a["status"] == "failed"
+    assert "no 'pr'" in a["error"]

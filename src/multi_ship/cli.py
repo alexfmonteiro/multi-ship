@@ -222,7 +222,11 @@ def main(argv=None) -> int:
         rest = argv[1:]
         repo = "."
         if "--repo" in rest:
-            repo = rest[rest.index("--repo") + 1]
+            i = rest.index("--repo")
+            if i + 1 >= len(rest):
+                print("error: --repo requires a value", file=sys.stderr)
+                return 1
+            repo = rest[i + 1]
         elif rest and not rest[0].startswith("-"):
             repo = rest[0]
         return cmd_status(repo)
@@ -231,6 +235,9 @@ def main(argv=None) -> int:
         repo = "."
         if "--repo" in rest:
             i = rest.index("--repo")
+            if i + 1 >= len(rest):
+                print("error: --repo requires a value", file=sys.stderr)
+                return 1
             repo = rest[i + 1]
             rest = rest[:i] + rest[i + 2:]
         return cmd_preflight(repo, rest)
@@ -265,16 +272,22 @@ def main(argv=None) -> int:
     # the three-option message.
     if run_log_path.exists() and not args.resume:
         import json
+        corrupt = False
         try:
             log = json.loads(run_log_path.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
-            log = {}
+            log, corrupt = {}, True
         all_terminal = bool(log.get("items")) and all(
             it.get("status") in ("shipped", "failed") for it in log["items"])
         different_backlog = list(specs) != list(log.get("order", []))
         if args.fresh or (all_terminal and different_backlog):
             dest = _archive_completed_run(state_dir)
             print(f"archived prior run → {dest}")
+        elif corrupt:
+            print("the previous run-log at .multi-ship/run-log.json is corrupt — "
+                  "pass --fresh to archive it and start over, or remove "
+                  ".multi-ship/ to start fresh", file=sys.stderr)
+            return 2
         else:
             print("a previous run-log exists at .multi-ship/run-log.json — pass "
                   "--resume to continue it, --fresh to archive it and start over, "

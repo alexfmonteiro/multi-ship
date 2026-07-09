@@ -79,3 +79,25 @@ def test_init_does_not_clobber_existing_workflow(tmp_path):
     wf.write_text("// locally customized")
     cmd_init(str(tmp_path), template_path=bundled_dir("templates") / "multi-ship.json")
     assert wf.read_text() == "// locally customized"
+
+def test_status_repo_flag_without_value_errors_cleanly(capsys):
+    from multi_ship import cli
+    rc = cli.main(["status", "--repo"])
+    assert rc == 1
+    assert "--repo requires a value" in capsys.readouterr().err
+
+def test_corrupt_run_log_message_does_not_suggest_resume(tmp_path, monkeypatch, capsys):
+    import shutil as _sh
+    from multi_ship import cli
+    (tmp_path / ".claude").mkdir(parents=True)
+    _sh.copy(cli.bundled_dir("templates") / "multi-ship.json",
+             tmp_path / ".claude" / "multi-ship.json")
+    spec_dir = tmp_path / "docs" / "specs"; spec_dir.mkdir(parents=True)
+    (spec_dir / "a.md").write_text("# a")
+    state = tmp_path / ".multi-ship"; state.mkdir()
+    (state / "run-log.json").write_text("{not json")
+    rc = cli.main(["docs/specs/a.md", "--repo", str(tmp_path)])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "corrupt" in err
+    assert "--resume" not in err, "resume would crash on a corrupt log — don't suggest it"

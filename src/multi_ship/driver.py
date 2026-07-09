@@ -312,6 +312,10 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
         fields["failure_kind"] = item.get("failure_kind") or "unknown"
         runlog.set_item_status(run_log, sid, "failed", **fields)
         return False
+    if not item.get("pr"):
+        raise claude_cli.ClaudeError(
+            f"ship-one report for {iid} has status '{item.get('status')}' but no 'pr' "
+            "— cannot judge or merge")
     runlog.set_item_status(run_log, sid, "awaiting_judge", pr=item.get("pr"), branch=item.get("branch"))
 
     # Cold judge, with one fix retry
