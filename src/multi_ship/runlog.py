@@ -1,6 +1,8 @@
 """Run-log: durable per-run state with an enforced item-status state machine."""
 from __future__ import annotations
 import json
+import os
+import tempfile
 from pathlib import Path
 
 class StatusError(Exception):
@@ -14,6 +16,13 @@ _TRANSITIONS = {
     "failed": set(),
 }
 TERMINAL = {"shipped", "failed"}
+
+# Per-round annotations that describe ONE attempt/pause, not the item itself.
+# Cleared on every status transition so a stale judge_reason / paused_reason /
+# error never survives into (and gets displayed for) a later status. Callers
+# re-supply the relevant ones via **fields on each transition.
+_TRANSIENT_FIELDS = ("paused_reason", "resets_at", "judge_reason",
+                     "error", "failure_kind", "parent_notes")
 
 def init_run_log(path: Path, order: list[str], stop_on_failure: bool, notification_surface: str) -> None:
     path = Path(path)
@@ -32,7 +41,20 @@ def read_run_log(path: Path) -> dict:
     return json.loads(Path(path).read_text())
 
 def _write(path: Path, log: dict) -> None:
-    Path(path).write_text(json.dumps(log, indent=2))
+    """Atomic write (tmp file + os.replace) — a crash mid-write must never
+    corrupt the run-log that --resume depends on."""
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(log, indent=2))
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 def _find(log: dict, item_id: str) -> dict:
     for it in log["items"]:
@@ -47,6 +69,8 @@ def set_item_status(path: Path, item_id: str, new_status: str, **fields) -> None
     if new_status not in _TRANSITIONS.get(cur, set()):
         raise StatusError(f"illegal transition {cur} -> {new_status} for {item_id}")
     it["status"] = new_status
+    for k in _TRANSIENT_FIELDS:
+        it.pop(k, None)
     it.update(fields)
     _write(path, log)
 
