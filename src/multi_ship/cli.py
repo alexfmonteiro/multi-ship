@@ -61,6 +61,17 @@ def cmd_init(repo: str, template_path: Path) -> None:
     dest = claude_dir / "multi-ship.json"
     if not dest.exists():
         shutil.copy(template_path, dest)
+    # The config's build_workflow must resolve from <repo>/.claude/workflows/
+    # (see DESIGN.md + README config table), so init installs the bundled
+    # workflow(s) there. Idempotent: never clobbers a locally customized copy.
+    wf_src = bundled_dir("workflows")
+    if wf_src.is_dir():
+        wf_dst = claude_dir / "workflows"
+        wf_dst.mkdir(parents=True, exist_ok=True)
+        for wf in sorted(wf_src.glob("*.js")):
+            target = wf_dst / wf.name
+            if not target.exists():
+                shutil.copy(wf, target)
     gi = repo / ".gitignore"
     line = ".multi-ship/"
     existing = gi.read_text() if gi.exists() else ""

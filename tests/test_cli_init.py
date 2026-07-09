@@ -64,3 +64,18 @@ def test_main_specs_route_to_run_loop(tmp_path, monkeypatch):
     rc = cli.main(["docs/specs/x.md", "--repo", str(tmp_path)])
     assert rc == 0
     assert captured["specs"] == ["docs/specs/x.md"]
+
+def test_init_installs_build_workflow(tmp_path):
+    from multi_ship.cli import cmd_init, bundled_dir
+    cmd_init(str(tmp_path), template_path=bundled_dir("templates") / "multi-ship.json")
+    wf = tmp_path / ".claude" / "workflows" / "mixed-model-burst.js"
+    assert wf.exists(), "init must install the build workflow the config names"
+    assert "mixed-model-burst" in wf.read_text()
+
+def test_init_does_not_clobber_existing_workflow(tmp_path):
+    from multi_ship.cli import cmd_init, bundled_dir
+    wf = tmp_path / ".claude" / "workflows" / "mixed-model-burst.js"
+    wf.parent.mkdir(parents=True)
+    wf.write_text("// locally customized")
+    cmd_init(str(tmp_path), template_path=bundled_dir("templates") / "multi-ship.json")
+    assert wf.read_text() == "// locally customized"
