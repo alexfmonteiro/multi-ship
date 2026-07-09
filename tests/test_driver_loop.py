@@ -639,3 +639,74 @@ def test_quota_during_judge_still_pauses(tmp_path, monkeypatch):
     assert result["paused"]["item"] == "a.md"
     log = json.loads((state / "run-log.json").read_text())
     assert log["items"][0]["status"] == "pending"
+
+# ---------------------------------------------------------------------------
+# --fix path: same freshness + failed-status discipline as the first build.
+# ---------------------------------------------------------------------------
+
+def test_fix_reporting_failed_stops_with_builder_kind(tmp_path, monkeypatch):
+    """ship-one --fix writes status=failed (needs_redesign): the item must fail
+    with the BUILDER's kind, not proceed to a second judge round."""
+    state = tmp_path / ".multi-ship"
+    judges = {"n": 0}
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one a.md --fix"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "failed", "failure_kind": "needs_redesign",
+                 "parent_notes": "cannot fix without redesign"}))
+            return {"result": "fix failed"}
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            judges["n"] += 1
+            (state / "verdict-a.md.json").write_text(
+                json.dumps({"ok": False, "reason": "missing test"}))
+            return {"result": "judged"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(driver, "_merge_pr",
+                        lambda pr, repo: (_ for _ in ()).throw(AssertionError("no merge")))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == []
+    assert judges["n"] == 1, "a failed fix must not be re-judged"
+    log = json.loads((state / "run-log.json").read_text())
+    a = next(it for it in log["items"] if it["id"] == "a.md")
+    assert a["status"] == "failed"
+    assert a["failure_kind"] == "needs_redesign"
+
+def test_fix_writing_no_fresh_report_fails_item(tmp_path, monkeypatch):
+    """ship-one --fix returns without rewriting item-<id>.json: honest error,
+    not a re-judge of the stale pre-fix report."""
+    state = tmp_path / ".multi-ship"
+    judges = {"n": 0}
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one a.md --fix"):
+            return {"result": "crashed without writing"}
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            judges["n"] += 1
+            (state / "verdict-a.md.json").write_text(
+                json.dumps({"ok": False, "reason": "missing test"}))
+            return {"result": "judged"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(driver, "_merge_pr",
+                        lambda pr, repo: (_ for _ in ()).throw(AssertionError("no merge")))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == []
+    assert judges["n"] == 1
+    log = json.loads((state / "run-log.json").read_text())
+    a = next(it for it in log["items"] if it["id"] == "a.md")
+    assert a["status"] == "failed"
+    assert a["failure_kind"] == "error"

@@ -327,10 +327,23 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
             runlog.set_item_status(run_log, sid, "shipped")
             return True
         if attempt == 0:
-            # re-dispatch ship-one to FIX using the judge's reason, then re-judge
+            # re-dispatch ship-one to FIX using the judge's reason, then re-judge.
+            # Same freshness + failed-status discipline as the first build: a fix
+            # that crashed without rewriting the report must not be re-judged
+            # from stale data, and an honest failed fix keeps the builder's kind.
             runlog.set_item_status(run_log, sid, "needs_fix")
+            fix_before = item_path.stat().st_mtime_ns if item_path.exists() else 0
             claude_cli.run(_fix_prompt(sid, verdict.get("reason", "")), repo=repo)
-            item = _read_json(state_dir / f"item-{iid}.json")
+            if not item_path.exists() or item_path.stat().st_mtime_ns <= fix_before:
+                raise claude_cli.ClaudeError(
+                    f"ship-one --fix produced no fresh item report for {iid} "
+                    "(stale/unchanged item-<id>.json — likely quota or crash mid-fix)")
+            item = _read_json(item_path)
+            if item.get("status") == "failed":
+                fields = {k: item.get(k) for k in ("pr", "parent_notes") if item.get(k)}
+                fields["failure_kind"] = item.get("failure_kind") or "unknown"
+                runlog.set_item_status(run_log, sid, "failed", **fields)
+                return False
             runlog.set_item_status(run_log, sid, "awaiting_judge", pr=item.get("pr"))
     jf = {"judge_reason": verdict.get("reason"), "failure_kind": "judge_rejected"}
     if item.get("parent_notes"):
