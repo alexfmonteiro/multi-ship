@@ -24,6 +24,20 @@ All notable changes to multi-ship will be documented in this file.
   (per DESIGN.md); previously a fresh install could never build.
 - Clean errors for `--repo` without a value, a corrupt `run-log.json` (no longer
   suggests `--resume`, which would crash), and item reports missing `pr`.
+- **The driver loop is now crash-proof.** Any unexpected error while processing an
+  item (including a genuine `gh pr merge` `CalledProcessError`) is caught, fails just
+  that item, and still reaches the end-of-run notify — a single item can no longer
+  kill the whole run via an unhandled exception.
+- **`_merge_pr` is fail-soft on post-merge branch cleanup.** A failed
+  `--delete-branch` (e.g. a leftover build worktree still holds the branch) no longer
+  crashes the run once the PR is confirmed `MERGED`; the merge itself still hard-fails
+  the item if it truly fails.
+- **Idempotent recovery on `--resume`.** If a prior attempt already merged an item's
+  PR, the driver short-circuits to the archive + `shipped` tail instead of rebuilding,
+  re-judging, and re-merging an already-merged PR.
+- **Build worktrees are cleaned up after merge.** The driver removes the item's build
+  worktree (fail-soft) before deleting its branch, so worktrees stop accumulating and
+  can't block branch deletion.
 
 ### Added
 
@@ -137,25 +151,9 @@ All notable changes to multi-ship will be documented in this file.
 
 ### Changed
 
-- README reframed to lead with the context-rot problem and the fresh-context-per-
-  item fix, with new "Is this for me?" and "Safety & blast radius" sections.
-
-### Fixed
-
-- **The driver loop is now crash-proof.** Any unexpected error while processing an
-  item (including a genuine `gh pr merge` `CalledProcessError`) is caught, fails just
-  that item, and still reaches the end-of-run notify — a single item can no longer
-  kill the whole run via an unhandled exception.
-- **`_merge_pr` is fail-soft on post-merge branch cleanup.** A failed
-  `--delete-branch` (e.g. a leftover build worktree still holds the branch) no longer
-  crashes the run once the PR is confirmed `MERGED`; the merge itself still hard-fails
-  the item if it truly fails.
-- **Idempotent recovery on `--resume`.** If a prior attempt already merged an item's
-  PR, the driver short-circuits to the archive + `shipped` tail instead of rebuilding,
-  re-judging, and re-merging an already-merged PR.
-- **Build worktrees are cleaned up after merge.** The driver removes the item's build
-  worktree (fail-soft) before deleting its branch, so worktrees stop accumulating and
-  can't block branch deletion.
+- README reframed to lead with the verification bottleneck and the cold-judge
+  merge gate (with the context-rot inversion as the second act), plus
+  "Is this for me?" and "Safety & blast radius" sections.
 
 ## v0.1.0 - 2026-06-16
 

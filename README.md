@@ -137,7 +137,7 @@ discovery + interactive-use path; the CLI is the engine.
 ### Uninstall
 
 ```bash
-pip uninstall multi-ship
+pipx uninstall multi-ship   # or `pip uninstall multi-ship` for a pip install
 rm -rf ~/.claude/skills/ship-one ~/.claude/skills/judge-shipped \
        ~/.claude/skills/dream-run ~/.claude/skills/autonomous-session \
        ~/.claude/skills/autonomous-multi-ship

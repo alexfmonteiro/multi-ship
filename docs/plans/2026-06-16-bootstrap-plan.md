@@ -1,4 +1,11 @@
-# multi-ship Implementation Plan
+# multi-ship Implementation Plan (ARCHIVED — 2026-06-16 bootstrap)
+
+> **Historical artifact.** This is the original pre-release bootstrap plan,
+> retained for project history. All tasks were completed in June 2026 (the
+> checkboxes were never ticked). The code listings below reflect the pre-release
+> state and contain bugs fixed since (see CHANGELOG.md, e.g. PR #16) — do NOT
+> use them as a reference for current behavior; the source tree and README are
+> authoritative.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "multi-ship"
 version = "0.1.0"
-description = "Ship a backlog of specs autonomously on Claude Code — one fresh context per item, cold-judge merge gate, on-disk handoff memory."
+description = "Ship a spec backlog autonomously on Claude Code — an independent cold judge gates every merge (sees only the spec DoD + PR diff). Fresh context per item, on-disk handoff memory."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
