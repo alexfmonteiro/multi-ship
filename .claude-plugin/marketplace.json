@@ -6,7 +6,7 @@
     {
       "name": "multi-ship",
       "source": ".",
-      "description": "Fresh context per item, cold-judge merge gate, on-disk handoff memory. Skills: ship-one, judge-shipped, dream-run, autonomous-session, autonomous-multi-ship.",
+      "description": "An independent cold judge gates every merge (sees only the spec DoD + PR diff); fresh context per item; on-disk handoff memory. Skills: ship-one, judge-shipped, dream-run, autonomous-session, autonomous-multi-ship.",
       "version": "0.1.0",
       "author": { "name": "Alex Monteiro" }
     }

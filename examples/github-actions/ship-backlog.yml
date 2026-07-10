@@ -8,7 +8,9 @@
 #   - Secret ANTHROPIC_API_KEY (repo or org) for the Claude CLI.
 #   - The repo already has .claude/multi-ship.json (run `multi-ship init`).
 #   - In multi-ship.json set `verify` to a CI command that works in Actions,
-#     e.g. "gh pr checks $PR --watch", and `notify` to "echo" (or a webhook).
+#     e.g. "gh pr checks $PR --watch", and `notify` to "cat" (the summary is
+#     piped to the command's STDIN — `echo` would silently discard it) or a
+#     webhook script that reads stdin.
 #
 # ⚠️  This runs Claude with bypassPermissions and merges PRs unattended. Scope
 #     the token, protect your default branch, and start with one trivial spec.

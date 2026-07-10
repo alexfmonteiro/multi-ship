@@ -1,15 +1,18 @@
 # multi-ship — Design
 
 **Date:** 2026-06-16
-**Status:** Approved design, pre-implementation
+**Status:** Implemented and shipped — kept as the design rationale. Where this
+doc and the code disagree, the README documents current behavior. Known
+deviations from this design: stop-on-failure is the default with only a
+`--continue-on-failure` flag (there is no `--stop-on-failure` flag); follow-ups
+are consolidated into `.multi-ship/followups.md` (no auto-numbered follow-up
+spec is created); parent-checkout safety is a start/end git snapshot comparison
+reported in the notification (not a per-item assert); and the end-of-run
+notification is a summary, not a per-item operator checklist.
 **License:** MIT (open source)
-**Home:** `~/Projects/multi-ship` (own git repo, to be published on GitHub)
+**Home:** `~/Projects/multi-ship` (own git repo, published on GitHub)
 **Scope:** Global, cross-project autonomous multi-item shipping with true
 fresh-context-per-item, built on Claude Code, distributed as an installable CLI + skills.
-
-> NOTE: this design doc currently lives at `~/.claude/scripts/multi-ship/DESIGN.md`
-> from the earlier draft. On implementation it moves into the new repo at
-> `~/Projects/multi-ship/DESIGN.md` (or `docs/DESIGN.md`) and the `~/.claude` copy is removed.
 
 ## Problem
 

@@ -2,7 +2,7 @@
   "name": "multi-ship",
   "displayName": "multi-ship",
   "version": "0.1.0",
-  "description": "Autonomous multi-spec shipping for Claude Code: fresh context per item, an independent cold-judge merge gate, and on-disk handoff memory. Installs the ship-one / judge-shipped / dream-run skills; pair with the `multi-ship` CLI (pip) for fully autonomous backlog runs.",
+  "description": "Autonomous multi-spec shipping for Claude Code: an independent cold judge gates every merge (sees only the spec DoD + PR diff), each item gets a fresh context, and cross-item memory lives on disk. Installs the ship-one / judge-shipped / dream-run skills; pair with the `multi-ship` CLI (pipx) for fully autonomous backlog runs.",
   "author": { "name": "Alex Monteiro" },
   "homepage": "https://github.com/alexfmonteiro/multi-ship",
   "repository": "https://github.com/alexfmonteiro/multi-ship",

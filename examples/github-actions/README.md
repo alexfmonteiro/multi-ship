@@ -11,7 +11,9 @@ workflow.
    `multi-ship init` and fill in `.claude/multi-ship.json`. For CI:
    - `verify`: a command that blocks until checks finish, e.g.
      `gh pr checks $PR --watch`.
-   - `notify`: `echo` (or a webhook `curl` if you want a ping).
+   - `notify`: `cat` — the end-of-run summary is piped to the command's
+     **stdin**, so `echo` would silently discard it. For a ping, use a webhook
+     script that reads stdin.
    - `test_cmd`: your project's test command (runs inside the build).
 2. Add an `ANTHROPIC_API_KEY` secret (repo or org) for the Claude CLI.
 3. Copy `ship-backlog.yml` into the target repo's `.github/workflows/`.
