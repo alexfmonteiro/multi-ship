@@ -5,6 +5,11 @@ All notable changes to multi-ship will be documented in this file.
 ## Unreleased
 
 ### Fixed
+- A `complete_cmd` failure after a confirmed merge no longer marks the item `failed`
+  (which `--resume` then looped on). The item is recorded `shipped` with a truncated,
+  secret-masked `bookkeeping_error`, the run keeps going, and the error is listed in
+  the end-of-run notification and `multi-ship status`. Quota exhaustion during
+  bookkeeping still pauses the item.
 - A hung `claude -p` (subprocess timeout) is now a per-item `ClaudeError` instead of an
   uncaught `TimeoutExpired` that crashed the whole run before notification.
 - The documented judge fail-open is now implemented: a judge crash or a judge session

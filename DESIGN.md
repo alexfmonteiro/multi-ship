@@ -131,6 +131,8 @@ multi-ship <specs...>  →  driver:
     4. driver merges (deterministic, shell): gh pr merge --squash --delete-branch;
           bookkeeping via fresh `claude -p "{config.complete_cmd}"` (a skill,
           can't run in-process); ff main; assert parent tree clean → mark shipped
+          bookkeeping error → still shipped, with `bookkeeping_error` surfaced
+                              in notify + status (the merge is the ship)
   end:
     if HANDOFF worth consolidating (non-empty Errors/Knowledge, or ≥2 shipped):
       claude -p "/dream-run"  → reads HANDOFF.md + item reports → dream-proposals.md

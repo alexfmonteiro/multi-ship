@@ -364,6 +364,9 @@ multi-ship <specs...>  →  driver:
           gh pr merge --squash --delete-branch
           claude -p "{complete_cmd}" (bookkeeping skill)
           mark shipped in run-log
+          bookkeeping error → still shipped (the PR is merged): record a
+            truncated, secret-masked bookkeeping_error, keep going, list it
+            in the notification and `multi-ship status`; quota → pause
 
   end of run:
     if HANDOFF has errors/knowledge OR ≥2 items shipped:
