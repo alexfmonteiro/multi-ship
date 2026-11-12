@@ -79,3 +79,13 @@ def test_main_status_routes(tmp_path, capsys):
     rc = cli.main(["status", str(tmp_path)])
     assert rc == 0
     assert "shipped 2/6" in capsys.readouterr().out
+
+def test_cmd_status_corrupt_runlog_errors_cleanly(tmp_path, capsys):
+    sd = tmp_path / ".multi-ship"
+    sd.mkdir()
+    (sd / "run-log.json").write_text("{not json")
+    rc = cmd_status(str(tmp_path))
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "corrupt" in err
+    assert len(err.strip().splitlines()) == 1

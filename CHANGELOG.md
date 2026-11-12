@@ -24,6 +24,9 @@ All notable changes to multi-ship will be documented in this file.
   (per DESIGN.md); previously a fresh install could never build.
 - Clean errors for `--repo` without a value, a corrupt `run-log.json` (no longer
   suggests `--resume`, which would crash), and item reports missing `pr`.
+- A missing or invalid `.claude/multi-ship.json` (run and `preflight`) and a corrupt
+  run-log under `multi-ship status` print a one-line error and exit 1 instead of a
+  traceback. A missing config suggests `multi-ship init`.
 - **The driver loop is now crash-proof.** Any unexpected error while processing an
   item (including a genuine `gh pr merge` `CalledProcessError`) is caught, fails just
   that item, and still reaches the end-of-run notify — a single item can no longer
