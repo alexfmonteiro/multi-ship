@@ -130,7 +130,7 @@ multi-ship <specs...>  →  driver:
           judge error → FAIL-OPEN: log, proceed (a flaky judge can't trap the run)
     4. driver merges (deterministic, shell): gh pr merge --squash --delete-branch;
           bookkeeping via fresh `claude -p "{config.complete_cmd}"` (a skill,
-          can't run in-process); ff main; assert parent tree clean → mark shipped
+          can't run in-process; skipped if "none"/""); ff main; assert parent tree clean → mark shipped
           bookkeeping error → still shipped, with `bookkeeping_error` surfaced
                               in notify + status (the merge is the ship)
   end:
@@ -240,7 +240,7 @@ hardcoded model IDs, project-specific invariants, the literal test command,
   "verify": "gh pr checks $PR --watch",
   "notify": "<your notify command, e.g. a Telegram/Slack webhook script>",
   "pr_body_convention": "Closes #{issue}",
-  "complete_cmd": "/complete-spec {slug}",
+  "complete_cmd": "none",
   "test_cmd": "<your project's test command, e.g. ruff check . && mypy . && pytest -x>",
   "build_invariants": "<one paragraph of your project's must-honor invariants, e.g. test-first, typed models, no hardcoded secrets>",
   "smoke_instructions": "<how to exercise a new code path end-to-end, e.g. load your app config and call the new function with real inputs>",
