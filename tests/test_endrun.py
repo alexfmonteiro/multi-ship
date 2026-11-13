@@ -81,3 +81,16 @@ def test_format_notification_stopped_without_kind_or_notes():
     status_line = next(ln for ln in msg.splitlines() if "stopped at: b.md" in ln)
     assert "[" not in status_line
     assert _why_line(msg) is None
+
+
+def test_format_notification_lists_bookkeeping_errors():
+    msg = format_notification(["a.md", "b.md"], None, [], "/s/run-log.json", None,
+                              bookkeeping=[("a.md", "claude -p timed out after 7200s")])
+    assert "all shipped" in msg
+    assert "bookkeeping failed (1)" in msg
+    assert "  - a.md: claude -p timed out after 7200s" in msg
+
+
+def test_format_notification_no_bookkeeping_section_when_clean():
+    msg = format_notification(["a.md"], None, [], "/s/run-log.json", None)
+    assert "bookkeeping" not in msg
