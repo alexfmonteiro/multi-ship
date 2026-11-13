@@ -214,7 +214,7 @@ Flags:
 | Flag | Meaning |
 |---|---|
 | `--continue-on-failure` | Keep processing remaining specs when an item fails (default: stop at the first failure) |
-| `--resume` | Skip specs already `shipped` in the run-log; restart at the first non-shipped item |
+| `--resume` | Skip specs already `shipped` in the run-log; restart at the first non-shipped item. The run-log order wins: spec arguments are not re-resolved (shipped specs may have moved), and arguments that differ from the run-log are ignored with a note. With no run-log, starts a new run from the arguments |
 | `--fresh` | Archive any existing `run-log.json` to `.multi-ship/archive/<timestamp>/` and start a brand-new run. Forces the archive even when the prior run is non-terminal or the backlog is unchanged. Never combined with `--resume` (resume wins and never archives) |
 | `--repo <path>` | Repo root (default: current working directory) |
 | `--issue N` | Resolve GitHub issue N to its spec file and add it to the run list (repeatable) |
@@ -402,7 +402,7 @@ All per-run state lives in `.multi-ship/` at the repo root (gitignored):
 
 `--resume` reads `run-log.json`, skips items with `status: shipped`, and restarts
 at the first item that is not yet shipped. It does not clear or rewrite existing
-artifacts.
+artifacts. The run-log's `order` wins over any spec arguments you pass.
 
 **Auto-archive of a completed prior run.** When a `run-log.json` already exists and you
 are *not* resuming, multi-ship checks whether the prior run is fully terminal (every item

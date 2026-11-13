@@ -162,3 +162,65 @@ def test_main_resume_never_archives(tmp_path, monkeypatch, capsys):
     assert calls.get("kw") is not None
     assert not (repo / ".multi-ship" / "archive").exists()
     assert rc == 0
+
+
+# --- --resume drives from the run-log, not the spec arguments (#21) -------
+
+def _record_run_loop(monkeypatch):
+    calls = {}
+    def stub(**kw):
+        calls["kw"] = kw
+        return {"shipped": [], "stopped_at": None}
+    monkeypatch.setattr(driver, "run_loop", stub)
+    return calls
+
+
+def test_main_resume_tolerates_shipped_spec_moved_away(tmp_path, monkeypatch, capsys):
+    repo = tmp_path
+    _write_config(repo)
+    _spec(repo, "b.md")  # a.md shipped and complete_cmd moved it away
+    order = ["docs/specs/a.md", "docs/specs/b.md"]
+    _completed_runlog(repo / ".multi-ship", order=order,
+                      statuses={"docs/specs/a.md": "shipped",
+                                "docs/specs/b.md": "pending"})
+    calls = _record_run_loop(monkeypatch)
+    rc = cli.main(order + ["--repo", str(repo), "--resume"])
+    assert rc == 0
+    assert calls["kw"]["specs"] == order
+    assert calls["kw"]["resume"] is True
+    assert "ignoring" not in capsys.readouterr().out
+
+
+def test_main_resume_with_different_specs_notes_and_uses_run_log(tmp_path, monkeypatch, capsys):
+    repo = tmp_path
+    _write_config(repo)
+    _spec(repo, "other.md")
+    order = ["docs/specs/a.md", "docs/specs/b.md"]
+    _completed_runlog(repo / ".multi-ship", order=order,
+                      statuses={"docs/specs/a.md": "shipped",
+                                "docs/specs/b.md": "pending"})
+    calls = _record_run_loop(monkeypatch)
+    rc = cli.main(["docs/specs/other.md", "--repo", str(repo), "--resume"])
+    assert rc == 0
+    assert calls["kw"]["specs"] == order
+    out = capsys.readouterr().out
+    assert "resuming the existing run-log; ignoring 1 spec argument(s)" in out
+
+
+def test_main_resume_without_run_log_resolves_and_starts(tmp_path, monkeypatch, capsys):
+    repo = tmp_path
+    _write_config(repo)
+    _spec(repo, "new.md")
+    calls = _record_run_loop(monkeypatch)
+    rc = cli.main(["docs/specs/new.md", "--repo", str(repo), "--resume"])
+    assert rc == 0
+    assert calls["kw"]["specs"] == ["docs/specs/new.md"]
+
+
+def test_main_resume_without_run_log_still_fails_on_missing_spec(tmp_path, monkeypatch, capsys):
+    repo = tmp_path
+    _write_config(repo)
+    _record_run_loop(monkeypatch)
+    rc = cli.main(["docs/specs/missing.md", "--repo", str(repo), "--resume"])
+    assert rc == 1
+    assert "does not exist" in capsys.readouterr().err
