@@ -224,6 +224,24 @@ def _resolve_specs(args, cfg, repo: Path) -> list[str]:
         repo=repo,
     )
 
+def _run_log_order(run_log_path: Path) -> list[str] | None:
+    """The run-log's item order, or None when it is missing or unreadable."""
+    import json
+    try:
+        order = json.loads(run_log_path.read_text()).get("order")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+    return list(order) if order else None
+
+def _tokens_match(args, cfg, repo: Path, order: list[str]) -> bool:
+    """True when the spec arguments name the same backlog as `order`."""
+    if not args.issue and list(args.specs) == order:
+        return True
+    try:
+        return _resolve_specs(args, cfg, repo) == order
+    except ResolveError:
+        return False
+
 def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
 
@@ -277,15 +295,24 @@ def main(argv=None) -> int:
     cfg = _load_config_or_report(repo)
     if cfg is None:
         return 1
-    try:
-        specs = _resolve_specs(args, cfg, repo)
-    except ResolveError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    if not specs:
-        print("no specs to ship", file=sys.stderr); return 1
     state_dir = repo / ".multi-ship"
     run_log_path = state_dir / "run-log.json"
+    # A resume drives from the run-log's order (run_loop ignores `specs` then),
+    # so don't fail on tokens whose specs already shipped and were moved away.
+    resume_order = _run_log_order(run_log_path) if args.resume else None
+    if resume_order:
+        if (args.specs or args.issue) and not _tokens_match(args, cfg, repo, resume_order):
+            n = len(args.specs or []) + len(args.issue or [])
+            print(f"resuming the existing run-log; ignoring {n} spec argument(s)")
+        specs = resume_order
+    else:
+        try:
+            specs = _resolve_specs(args, cfg, repo)
+        except ResolveError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    if not specs:
+        print("no specs to ship", file=sys.stderr); return 1
     # --resume is checked FIRST so a resume never archives. Otherwise, when a
     # prior run-log exists, auto-archive it iff the prior run is fully terminal
     # AND the backlog differs (or the operator forced --fresh); else refuse with

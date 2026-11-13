@@ -11,6 +11,10 @@ All notable changes to multi-ship will be documented in this file.
   skill that multi-ship does not ship.
 
 ### Fixed
+- `--resume` with an existing run-log no longer re-resolves the spec arguments, so
+  re-running the original command works after `complete_cmd` moved shipped specs away.
+  The run-log order wins, and arguments that differ from it are ignored with a
+  one-line note instead of silently.
 - A `complete_cmd` failure after a confirmed merge no longer marks the item `failed`
   (which `--resume` then looped on). The item is recorded `shipped` with a truncated,
   secret-masked `bookkeeping_error`, the run keeps going, and the error is listed in
