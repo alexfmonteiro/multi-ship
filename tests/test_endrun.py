@@ -1,5 +1,8 @@
 # tests/test_endrun.py
-from multi_ship.endrun import collect_followups, compare_git_state, format_notification
+import subprocess
+from multi_ship import endrun
+from multi_ship.endrun import (collect_followups, compare_git_state, format_notification,
+                               git_snapshot, is_ancestor)
 
 def test_collect_followups_dedups_preserving_order():
     reports = [{"followups": ["a", "b"]}, {"followups": ["b", "c"]}, {}]
@@ -22,6 +25,63 @@ def test_compare_git_state_detects_new_dirty():
 def test_compare_git_state_clean():
     snap = {"head": "aaa", "porcelain": [" M x.py"]}
     assert compare_git_state(snap, snap) == []
+
+def test_compare_git_state_fast_forward_same_branch_is_expected():
+    before = {"head": "aaa", "branch": "main", "porcelain": []}
+    after = {"head": "bbb", "branch": "main", "porcelain": []}
+    assert compare_git_state(before, after, fast_forward=True) == []
+
+def test_compare_git_state_non_ancestor_head_warns():
+    before = {"head": "aaa", "branch": "main", "porcelain": []}
+    after = {"head": "bbb", "branch": "main", "porcelain": []}
+    assert any("HEAD moved" in p for p in compare_git_state(before, after, fast_forward=False))
+
+def test_compare_git_state_branch_switch_warns():
+    before = {"head": "aaa", "branch": "main", "porcelain": []}
+    after = {"head": "bbb", "branch": "feature", "porcelain": []}
+    problems = compare_git_state(before, after, fast_forward=True)
+    assert any("branch switched: main -> feature" in p for p in problems)
+
+def test_compare_git_state_detached_head_move_warns():
+    before = {"head": "aaa", "branch": "HEAD", "porcelain": []}
+    after = {"head": "bbb", "branch": "HEAD", "porcelain": []}
+    assert any("HEAD moved" in p for p in compare_git_state(before, after, fast_forward=True))
+
+def test_compare_git_state_fast_forward_still_reports_new_dirty():
+    before = {"head": "aaa", "branch": "main", "porcelain": []}
+    after = {"head": "bbb", "branch": "main", "porcelain": ["?? new.py"]}
+    problems = compare_git_state(before, after, fast_forward=True)
+    assert len(problems) == 1 and "new.py" in problems[0]
+
+def _git(repo, *args):
+    return subprocess.run(["git", *args], cwd=repo, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+def _commit(repo, msg):
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit",
+         "--allow-empty", "-q", "-m", msg)
+    return _git(repo, "rev-parse", "HEAD")
+
+def test_snapshot_and_is_ancestor_on_real_repo(tmp_path):
+    repo = str(tmp_path)
+    _git(repo, "init", "-q", "-b", "main")
+    old = _commit(repo, "one")
+    snap = git_snapshot(repo)
+    assert snap["head"] == old and snap["branch"] == "main"
+    new = _commit(repo, "two")
+    assert is_ancestor(repo, old, new)
+    assert not is_ancestor(repo, new, old)
+    assert not is_ancestor(repo, old, "not-a-sha")
+
+def test_is_ancestor_fails_soft_without_git(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("git not found")
+    monkeypatch.setattr(endrun.subprocess, "run", boom)
+    assert is_ancestor(".", "aaa", "bbb") is False
+    before = {"head": "aaa", "branch": "main", "porcelain": []}
+    after = {"head": "bbb", "branch": "main", "porcelain": []}
+    ff = is_ancestor(".", "aaa", "bbb")
+    assert any("HEAD moved" in p for p in compare_git_state(before, after, fast_forward=ff))
 
 def test_format_notification_all_shipped():
     msg = format_notification(["a.md", "b.md"], None, [], "/s/run-log.json", None)
