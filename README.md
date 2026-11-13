@@ -268,7 +268,7 @@ Actions instead of tying up your laptop — see
 | `notify` | How to deliver the end-of-run summary. Three routings: `"telegram"` — built-in stdlib Telegram bot (reads credentials from env / `.env`, no extra packages); `"none"` or `""` — no-op; any other string — treated as a shell command with the message passed on stdin (e.g. `"cat"`, `"jq -r '.'"`, a custom webhook script). | For the shell path, message text is piped to stdin. |
 | `notify_telegram` | _(optional)_ Config block used only when `notify == "telegram"`. See table below. | — |
 | `pr_body_convention` | Template for the PR body's closing keyword line (e.g. `"Closes #{issue}"`). | `{issue}` → issue number extracted from the spec's `Issue:` frontmatter |
-| `complete_cmd` | Claude Code skill invocation run after each successful merge for bookkeeping (e.g. `"/complete-spec {slug}"`). Runs as a fresh `claude -p`. | `{slug}` → spec filename stem (e.g. `P15` from `P15.md`) |
+| `complete_cmd` | Optional bookkeeping run after each successful merge, e.g. archiving the spec. Runs as a fresh `claude -p`. `"none"` or `""` skips it (the default written by `multi-ship init`). This repo's own `.claude/multi-ship.json` has a worked example that moves the spec to `docs/specs/done/`. | `{slug}` → spec filename stem (e.g. `P15` from `P15.md`) |
 | `test_cmd` | Project test command passed into the build workflow (e.g. `"pytest -x"`). | — |
 | `build_invariants` | One paragraph of project conventions (TDD rules, architecture constraints, etc.) injected into the build workflow prompt. | — |
 | `smoke_instructions` | Recipe for the post-build smoke test injected into the build workflow. | — |
@@ -362,7 +362,7 @@ multi-ship <specs...>  →  driver:
 
     4. driver merges (deterministic shell):
           gh pr merge --squash --delete-branch
-          claude -p "{complete_cmd}" (bookkeeping skill)
+          claude -p "{complete_cmd}" (optional bookkeeping; skipped if "none"/"")
           mark shipped in run-log
           bookkeeping error → still shipped (the PR is merged): record a
             truncated, secret-masked bookkeeping_error, keep going, list it

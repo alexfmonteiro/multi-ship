@@ -4,6 +4,12 @@ All notable changes to multi-ship will be documented in this file.
 
 ## Unreleased
 
+### Changed
+- `complete_cmd` of `"none"` or `""` now skips post-merge bookkeeping (no `claude -p`
+  call), on both the normal merge path and the already-merged `--resume` path. The
+  template and example configs default to `"none"` instead of a `/complete-spec`
+  skill that multi-ship does not ship.
+
 ### Fixed
 - A `complete_cmd` failure after a confirmed merge no longer marks the item `failed`
   (which `--resume` then looped on). The item is recorded `shipped` with a truncated,
