@@ -1,4 +1,5 @@
 # tests/test_driver_loop.py
+import dataclasses
 import json
 import subprocess
 import pytest
@@ -320,6 +321,58 @@ def test_resume_skips_rebuild_when_pr_already_merged(tmp_path, monkeypatch):
     assert "/judge-shipped" not in calls, "must not re-judge"
     assert merges == [], "must not re-merge"
     assert "/complete-spec" in calls, "must still archive (complete_cmd)"
+
+
+# ---------------------------------------------------------------------------
+# complete_cmd "none" / "" skips bookkeeping: no claude -p call after the merge.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("skip", ["none", ""])
+def test_complete_cmd_skip_values_ship_without_bookkeeping_call(tmp_path, monkeypatch, skip):
+    state = tmp_path / ".multi-ship"
+    calls = []
+    def fake_run(prompt, repo, timeout=7200):
+        calls.append(prompt)
+        sid = "a.md"
+        if prompt.startswith("/ship-one"):
+            (state / f"item-{sid}.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            (state / f"verdict-{sid}.json").write_text(json.dumps({"ok": True, "reason": "meets DoD"}))
+            return {"result": "judged"}
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    merges = []
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: merges.append(pr))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    cfg = dataclasses.replace(_cfg(), complete_cmd=skip)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=cfg,
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == ["a.md"]
+    assert merges == ["http://pr/1"]
+    assert skip not in calls, "complete_cmd skip value must not reach claude -p"
+
+
+@pytest.mark.parametrize("skip", ["none", ""])
+def test_complete_cmd_skip_values_on_resume_of_merged_item(tmp_path, monkeypatch, skip):
+    from multi_ship import runlog
+    state = tmp_path / ".multi-ship"; state.mkdir(parents=True)
+    rl = state / "run-log.json"
+    runlog.init_run_log(rl, order=["a.md"], stop_on_failure=True, notification_surface="none")
+    (state / "item-a.md.json").write_text(json.dumps(
+        {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+    calls = []
+    monkeypatch.setattr(claude_cli, "run", lambda prompt, repo, timeout=7200: calls.append(prompt))
+    monkeypatch.setattr(driver, "_pr_state", lambda pr, repo: "MERGED")
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    cfg = dataclasses.replace(_cfg(), complete_cmd=skip)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=cfg,
+                             stop_on_failure=True, state_dir=state, resume=True)
+    assert result["shipped"] == ["a.md"]
+    assert skip not in calls, "complete_cmd skip value must not reach claude -p"
 
 
 # ---------------------------------------------------------------------------

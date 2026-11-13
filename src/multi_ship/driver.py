@@ -288,10 +288,12 @@ def _ship(sid: str, cfg: Config, repo: str, run_log: Path) -> None:
     """Post-merge tail: run complete_cmd, then record the item shipped. The PR is
     already merged, so a bookkeeping failure must not fail the item (it would
     loop forever on --resume): record it as `bookkeeping_error` and keep going.
-    Quota exhaustion still propagates so the item is paused and retried."""
+    Quota exhaustion still propagates so the item is paused and retried.
+    A complete_cmd of "none" or "" skips bookkeeping."""
     fields = {}
     try:
-        claude_cli.run(cfg.complete_cmd.format(slug=Path(sid).stem), repo=repo)
+        if cfg.complete_cmd and cfg.complete_cmd != "none":
+            claude_cli.run(cfg.complete_cmd.format(slug=Path(sid).stem), repo=repo)
     except claude_cli.QuotaExhausted:
         raise
     except claude_cli.ClaudeError as e:
