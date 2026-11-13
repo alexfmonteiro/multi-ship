@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import driver
-from .config import load_config
+from .config import Config, ConfigError, load_config
 from .resolve import ResolveError, resolve_specs
 
 # Repo/package root: src/multi_ship/cli.py -> parents[2]. Works from a source
@@ -148,13 +148,27 @@ def _archive_completed_run(state_dir: Path, ts: str | None = None) -> Path:
         shutil.move(str(entry), str(dest / entry.name))
     return dest
 
+def _load_config_or_report(repo: Path) -> Config | None:
+    """Load the repo's config, or print a one-line error and return None."""
+    path = repo / ".claude" / "multi-ship.json"
+    try:
+        return load_config(path)
+    except ConfigError as exc:
+        hint = " — run `multi-ship init` to create it" if not path.exists() else ""
+        print(f"error: {exc}{hint}", file=sys.stderr)
+        return None
+
 def cmd_status(repo: str) -> int:
     run_log = Path(repo) / ".multi-ship" / "run-log.json"
     if not run_log.exists():
         print(f"no run-log at {run_log} — nothing has shipped here yet", file=sys.stderr)
         return 1
     import json
-    log = json.loads(run_log.read_text())
+    try:
+        log = json.loads(run_log.read_text())
+    except (OSError, json.JSONDecodeError):
+        print(f"the run-log at {run_log} is corrupt or unreadable", file=sys.stderr)
+        return 1
     print(format_status(log, str(Path(repo).resolve()), color=sys.stdout.isatty()))
     return 0
 
@@ -163,7 +177,9 @@ def cmd_preflight(repo: str, tokens: list[str]) -> int:
     all clear, 2 if any spec needs attention, 1 on a resolution error."""
     from . import preflight as pf
     repo_p = Path(repo).resolve()
-    cfg = load_config(repo_p / ".claude" / "multi-ship.json")
+    cfg = _load_config_or_report(repo_p)
+    if cfg is None:
+        return 1
     args = argparse.Namespace(specs=tokens, issue=None)
     try:
         specs = _resolve_specs(args, cfg, repo_p)
@@ -258,7 +274,9 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     repo = Path(args.repo).resolve()
-    cfg = load_config(repo / ".claude" / "multi-ship.json")
+    cfg = _load_config_or_report(repo)
+    if cfg is None:
+        return 1
     try:
         specs = _resolve_specs(args, cfg, repo)
     except ResolveError as exc:

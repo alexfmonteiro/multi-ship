@@ -81,6 +81,17 @@ def test_main_status_routes(tmp_path, capsys):
     assert "shipped 2/6" in capsys.readouterr().out
 
 
+def test_cmd_status_corrupt_runlog_errors_cleanly(tmp_path, capsys):
+    sd = tmp_path / ".multi-ship"
+    sd.mkdir()
+    (sd / "run-log.json").write_text("{not json")
+    rc = cmd_status(str(tmp_path))
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "corrupt" in err
+    assert len(err.strip().splitlines()) == 1
+
+
 def test_format_status_shows_bookkeeping_error_on_shipped_item():
     log = {"items": [{"id": "a.md", "status": "shipped", "pr": "41",
                       "bookkeeping_error": "claude -p exited 1: unknown skill"}]}

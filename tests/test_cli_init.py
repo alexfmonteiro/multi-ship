@@ -101,3 +101,50 @@ def test_corrupt_run_log_message_does_not_suggest_resume(tmp_path, monkeypatch, 
     err = capsys.readouterr().err
     assert "corrupt" in err
     assert "--resume" not in err, "resume would crash on a corrupt log — don't suggest it"
+
+def test_missing_config_errors_cleanly_with_init_hint(tmp_path, capsys):
+    from multi_ship import cli
+    rc = cli.main(["x.md", "--repo", str(tmp_path)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ")
+    assert "multi-ship init" in err
+    assert len(err.strip().splitlines()) == 1
+
+def test_invalid_json_config_errors_cleanly(tmp_path, capsys):
+    from multi_ship import cli
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "multi-ship.json").write_text("{not json")
+    rc = cli.main(["x.md", "--repo", str(tmp_path)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "invalid JSON" in err
+    assert len(err.strip().splitlines()) == 1
+
+def test_config_missing_key_errors_cleanly(tmp_path, capsys):
+    from multi_ship import cli
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "multi-ship.json").write_text("{}")
+    rc = cli.main(["x.md", "--repo", str(tmp_path)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "missing required key" in err
+    assert len(err.strip().splitlines()) == 1
+
+def test_preflight_missing_config_errors_cleanly(tmp_path, capsys):
+    from multi_ship import cli
+    rc = cli.main(["preflight", "--repo", str(tmp_path)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "multi-ship init" in err
+    assert len(err.strip().splitlines()) == 1
+
+def test_preflight_invalid_config_errors_cleanly(tmp_path, capsys):
+    from multi_ship import cli
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "multi-ship.json").write_text("{not json")
+    rc = cli.main(["preflight", "--repo", str(tmp_path)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "invalid JSON" in err
+    assert len(err.strip().splitlines()) == 1
