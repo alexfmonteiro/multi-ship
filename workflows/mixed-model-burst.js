@@ -1,7 +1,7 @@
 export const meta = {
   name: 'mixed-model-burst',
   description:
-    'Mixed-model fan-out for a task: Haiku scouts + readers ground the work, Opus plans, a diverse panel stress-tests the plan, then (opt-in) a coder implements in an isolated worktree and a reviewer adversarially verifies the diff. Fully parametrized — pass args.roles to override any model slot, args.repo for repo path, args.invariants + args.test_cmd + args.smoke_instructions for project conventions.',
+    'Mixed-model fan-out for a task: Haiku scouts + readers ground the work, Opus plans, a diverse panel stress-tests the plan, then (opt-in) a coder implements in an isolated worktree and a reviewer adversarially verifies the diff. Fully parametrized — pass args.roles to override any model slot, args.repo for repo path, args.invariants + args.test_cmd + args.smoke_instructions for project conventions, args.base_branch for the diff base (default main).',
   phases: [
     { title: 'Scout', detail: 'Haiku maps the spec + affected subsystems' },
     { title: 'Read', detail: 'one Haiku reader per affected area (parallel)' },
@@ -121,13 +121,14 @@ function resolveModel(role, difficulty) {
 }
 
 const REPO = a.repo || '.'
+const BASE = a.base_branch || 'main'
 
 // args.spec = path to a task spec (optional). With no spec, scout infers the
 // in-flight work from the current branch's diff — and ONLY from the diff.
 const spec = a.spec || null
 const specClause = spec
   ? `Read the task spec at ${spec} end-to-end. The task you must plan is defined by THIS file ONLY — its H1 title is the authoritative scope. The spec may cross-reference sibling tasks (e.g. in "Prerequisites"/"Soft" coordination notes); those are context, NOT your scope. Do NOT plan a different task than the one this file's title names. If the title says "Drop"/"Remove"/"Delete", this is a DELETION task — plan removals, not additions.`
-  : `No spec path was given. Run \`git -C ${REPO} diff main...HEAD --stat\` and \`git -C ${REPO} log --oneline -10\` to infer the IN-FLIGHT work. CRITICAL: if that diff is EMPTY (nothing uncommitted, nothing ahead of main), there is NO work to plan — do NOT browse docs/specs/ and do NOT pick a backlog/Todo spec to invent a task. In that case set spec_summary to exactly "NO_WORK" and return an empty areas array.`
+  : `No spec path was given. Run \`git -C ${REPO} diff ${BASE}...HEAD --stat\` and \`git -C ${REPO} log --oneline -10\` to infer the IN-FLIGHT work. CRITICAL: if that diff is EMPTY (nothing uncommitted, nothing ahead of ${BASE}), there is NO work to plan — do NOT browse docs/specs/ and do NOT pick a backlog/Todo spec to invent a task. In that case set spec_summary to exactly "NO_WORK" and return an empty areas array.`
 
 phase('Scout')
 const scout = await agent(
@@ -255,7 +256,7 @@ const review = await agent(
   `Adversarially review this implementation against its plan. Default to skeptical — try to find a reason it should NOT ship.
 Plan: ${JSON.stringify(plan, null, 2)}
 Coder's report: ${JSON.stringify(build, null, 2)}
-Inspect the branch "${build.branch}" in ${REPO} (\`git -C ${REPO} diff main...${build.branch}\`).
+Inspect the branch "${build.branch}" in ${REPO} (\`git -C ${REPO} diff ${BASE}...${build.branch}\`).
 Check: (1) does the diff implement EVERY step + test in the plan, (2) is the trifecta output real and green (not paraphrased), (3) does the smoke genuinely exercise the new path or is it hand-waved, (4) any documented invariant violated (see the project's conventions doc).
 Return whether it ships, blocking findings, an assessment of plan coverage, and confidence 0-1.`,
   { model: resolveModel('verifier'), phase: 'Verify', label: 'verify', schema: REVIEW },
