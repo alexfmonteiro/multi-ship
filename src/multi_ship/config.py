@@ -26,6 +26,7 @@ class Config:
     smoke_instructions: str
     roles: dict
     notify_telegram: dict = field(default_factory=dict)
+    base_branch: str = "main"
 
 def load_config(path: Path) -> Config:
     path = Path(path)
@@ -51,4 +52,8 @@ def load_config(path: Path) -> Config:
     kwargs = {k: data[k] for k in _REQUIRED_KEYS}
     if "notify_telegram" in data:
         kwargs["notify_telegram"] = data["notify_telegram"]
+    if "base_branch" in data:
+        if not isinstance(data["base_branch"], str) or not data["base_branch"]:
+            raise ConfigError("base_branch must be a non-empty string")
+        kwargs["base_branch"] = data["base_branch"]
     return Config(**kwargs)

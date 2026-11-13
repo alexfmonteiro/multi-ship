@@ -86,3 +86,29 @@ def test_notify_telegram_not_in_required_keys(tmp_path):
     # omitting it should not raise ConfigError
     cfg = load_config(_write(tmp_path, REQUIRED))
     assert hasattr(cfg, "notify_telegram")
+
+
+# ---------------------------------------------------------------------------
+# optional base_branch field
+# ---------------------------------------------------------------------------
+
+def test_base_branch_defaults_to_main(tmp_path):
+    from multi_ship.config import _REQUIRED_KEYS
+    assert "base_branch" not in _REQUIRED_KEYS
+    cfg = load_config(_write(tmp_path, REQUIRED))
+    assert cfg.base_branch == "main"
+
+
+def test_base_branch_uses_configured_value(tmp_path):
+    data = dict(REQUIRED)
+    data["base_branch"] = "develop"
+    cfg = load_config(_write(tmp_path, data))
+    assert cfg.base_branch == "develop"
+
+
+@pytest.mark.parametrize("bad", ["", 42, None])
+def test_base_branch_must_be_nonempty_string(tmp_path, bad):
+    data = dict(REQUIRED)
+    data["base_branch"] = bad
+    with pytest.raises(ConfigError, match="base_branch"):
+        load_config(_write(tmp_path, data))
