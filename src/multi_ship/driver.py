@@ -274,6 +274,32 @@ def _judge_verdict(sid: str, iid: str, pr: str, repo: str, state_dir: Path) -> d
         sys.stderr.write(f"multi-ship: unreadable verdict for {iid} — fail-open: {e}\n")
         return {"ok": True, "reason": f"unreadable verdict — fail-open: {str(e)[:200]}"}
 
+_SECRET_RE = re.compile(
+    r"(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}"
+    r"|(?i:bearer)\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"|(?i:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)")
+
+def _safe_error(e: Exception, limit: int = 300) -> str:
+    """One-line, secret-masked, truncated error text for the run-log/notification."""
+    msg = _SECRET_RE.sub("[redacted]", " ".join(str(e).split()))
+    return msg if len(msg) <= limit else msg[:limit] + "…"
+
+def _ship(sid: str, cfg: Config, repo: str, run_log: Path) -> None:
+    """Post-merge tail: run complete_cmd, then record the item shipped. The PR is
+    already merged, so a bookkeeping failure must not fail the item (it would
+    loop forever on --resume): record it as `bookkeeping_error` and keep going.
+    Quota exhaustion still propagates so the item is paused and retried."""
+    fields = {}
+    try:
+        claude_cli.run(cfg.complete_cmd.format(slug=Path(sid).stem), repo=repo)
+    except claude_cli.QuotaExhausted:
+        raise
+    except claude_cli.ClaudeError as e:
+        fields["bookkeeping_error"] = _safe_error(e)
+        sys.stderr.write(f"multi-ship: {sid} merged but complete_cmd failed "
+                         f"(non-fatal): {fields['bookkeeping_error']}\n")
+    runlog.set_item_status(run_log, sid, "shipped", **fields)
+
 def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Path) -> bool:
     # State files are keyed by the spec FILENAME (the skill contract), not the
     # full spec path — a path like docs/specs/x.md would otherwise become a
@@ -291,8 +317,7 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
             runlog.set_item_status(run_log, sid, "awaiting_judge",
                                    pr=prev.get("pr"), branch=prev.get("branch"))
             _cleanup_worktree(prev.get("branch"), repo)
-            claude_cli.run(cfg.complete_cmd.format(slug=Path(sid).stem), repo=repo)
-            runlog.set_item_status(run_log, sid, "shipped")
+            _ship(sid, cfg, repo, run_log)
             return True
     # Build + ship-tail → ship-one writes item-<filename>.json, pauses before merge.
     # Stamp the time first so we can detect a STALE report: if ship-one returns
@@ -326,9 +351,7 @@ def _process_item(sid: str, repo: str, cfg: Config, state_dir: Path, run_log: Pa
             # the branch open against `gh pr merge --delete-branch`.
             _cleanup_worktree(item.get("branch"), repo)
             _merge_pr(item["pr"], repo)
-            slug = Path(sid).stem
-            claude_cli.run(cfg.complete_cmd.format(slug=slug), repo=repo)
-            runlog.set_item_status(run_log, sid, "shipped")
+            _ship(sid, cfg, repo, run_log)
             return True
         if attempt == 0:
             # re-dispatch ship-one to FIX using the judge's reason, then re-judge.
@@ -382,9 +405,11 @@ def _end_of_run(repo: str, cfg: Config, state_dir: Path, run_log: Path,
         if stopped_item is not None:
             stop_kind = stopped_item.get("failure_kind")
             stop_notes = stopped_item.get("parent_notes")
+    bookkeeping = [(it["id"], it["bookkeeping_error"]) for it in log["items"]
+                   if it.get("status") == "shipped" and it.get("bookkeeping_error")]
     msg = endrun.format_notification(shipped, stopped_at, followups, str(run_log),
                                      followups_path, stop_kind=stop_kind,
-                                     stop_notes=stop_notes)
+                                     stop_notes=stop_notes, bookkeeping=bookkeeping)
     if paused:
         resets = paused.get("resets_at")
         msg += ("\n\nPAUSED — Claude session quota exhausted"

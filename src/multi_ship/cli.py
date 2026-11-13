@@ -122,9 +122,11 @@ def format_status(log: dict, repo: str, color: bool = False) -> str:
         label = _STATUS_LABEL.get(st, st).ljust(st_w)
         if color:
             label = f"\033[{_STATUS_COLOR.get(st, '0')}m{label}\033[0m"
-        kind = it.get("failure_kind")
+        kind = it.get("failure_kind") or ("bookkeeping_failed"
+                                          if it.get("bookkeeping_error") else None)
         detail = (it.get("judge_reason") or it.get("parent_notes")
-                  or it.get("error") or "").replace("\n", " ").strip()
+                  or it.get("error") or it.get("bookkeeping_error")
+                  or "").replace("\n", " ").strip()
         note = f"[{kind}] {detail}".strip() if kind else detail
         if len(note) > 60:
             note = note[:57] + "..."

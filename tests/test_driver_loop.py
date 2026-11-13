@@ -731,3 +731,124 @@ def test_item_report_without_pr_fails_with_clear_error(tmp_path, monkeypatch):
     a = next(it for it in log["items"] if it["id"] == "a.md")
     assert a["status"] == "failed"
     assert "no 'pr'" in a["error"]
+
+# ---------------------------------------------------------------------------
+# Bookkeeping failure after a confirmed merge: the item is still shipped, the
+# error is recorded (secret-free, truncated), and --resume does not loop on it.
+# ---------------------------------------------------------------------------
+
+def _bookkeeping_fake_run(state):
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            sid = prompt.split()[1]
+            (state / f"item-{sid}.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": f"http://pr/{sid}", "branch": f"spec/{sid}"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            sid = prompt.split()[1]
+            (state / f"verdict-{sid}.json").write_text(json.dumps({"ok": True, "reason": "ok"}))
+            return {"result": "judged"}
+        if prompt.startswith("/complete-spec a"):
+            raise claude_cli.ClaudeError(
+                "claude -p exited 1: unknown skill\ntoken=ghp_abcdefghijklmnopqrstuvwxyz0123 " + "x" * 400)
+        return {"result": "ok"}
+    return fake_run
+
+
+def test_bookkeeping_failure_after_merge_still_ships_and_continues(tmp_path, monkeypatch):
+    from multi_ship import endrun
+    state = tmp_path / ".multi-ship"
+    monkeypatch.setattr(claude_cli, "run", _bookkeeping_fake_run(state))
+    merges = []
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: merges.append(pr))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    captured = []
+    monkeypatch.setattr(endrun, "run_notify", lambda cmd, msg: captured.append(msg))
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md", "b.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["shipped"] == ["a.md", "b.md"]
+    assert result["stopped_at"] is None
+    assert merges == ["http://pr/a.md", "http://pr/b.md"]
+    log = json.loads((state / "run-log.json").read_text())
+    a = log["items"][0]
+    assert a["status"] == "shipped"
+    assert "failure_kind" not in a
+    err = a["bookkeeping_error"]
+    assert "unknown skill" in err
+    assert "ghp_" not in err and "\n" not in err
+    assert len(err) <= 301
+    assert "bookkeeping_error" not in log["items"][1]
+    assert "bookkeeping failed (1)" in captured[0]
+    assert "a.md: claude -p exited 1: unknown skill" in captured[0]
+
+
+def test_bookkeeping_failure_on_resume_recovery_ships_without_looping(tmp_path, monkeypatch):
+    from multi_ship import runlog
+    state = tmp_path / ".multi-ship"; state.mkdir(parents=True)
+    rl = state / "run-log.json"
+    runlog.init_run_log(rl, order=["a.md"], stop_on_failure=True, notification_surface="none")
+    # A prior run merged the PR but failed in bookkeeping.
+    runlog.set_item_status(rl, "a.md", "failed", error="claude -p exited 1", failure_kind="error")
+    (state / "item-a.md.json").write_text(json.dumps(
+        {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+    calls = []
+    fake = _bookkeeping_fake_run(state)
+    def recording_run(prompt, repo, timeout=7200):
+        calls.append(prompt.split()[0])
+        return fake(prompt, repo, timeout)
+    monkeypatch.setattr(claude_cli, "run", recording_run)
+    monkeypatch.setattr(driver, "_pr_state", lambda pr, repo: "MERGED")
+    monkeypatch.setattr(driver, "_merge_pr",
+                        lambda pr, repo: (_ for _ in ()).throw(AssertionError("no re-merge")))
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state, resume=True)
+    assert result["shipped"] == ["a.md"]
+    a = json.loads(rl.read_text())["items"][0]
+    assert a["status"] == "shipped"
+    assert "unknown skill" in a["bookkeeping_error"]
+    assert "failure_kind" not in a and "error" not in a
+    # A second --resume has nothing left to do: no bookkeeping re-run, no loop.
+    calls.clear()
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state, resume=True)
+    assert result["shipped"] == []
+    assert "/complete-spec" not in calls
+
+
+def test_quota_during_bookkeeping_still_pauses(tmp_path, monkeypatch):
+    state = tmp_path / ".multi-ship"
+    def fake_run(prompt, repo, timeout=7200):
+        if prompt.startswith("/ship-one"):
+            (state / "item-a.md.json").write_text(json.dumps(
+                {"status": "awaiting_judge", "pr": "http://pr/1", "branch": "spec/a"}))
+            return {"result": "built"}
+        if prompt.startswith("/judge-shipped"):
+            (state / "verdict-a.md.json").write_text(json.dumps({"ok": True, "reason": "ok"}))
+            return {"result": "judged"}
+        if prompt.startswith("/complete-spec"):
+            raise claude_cli.QuotaExhausted("quota", resets_at="5pm")
+        return {"result": "ok"}
+    monkeypatch.setattr(claude_cli, "run", fake_run)
+    monkeypatch.setattr(claude_cli, "probe_quota", lambda repo: (True, None))
+    monkeypatch.setattr(driver, "_merge_pr", lambda pr, repo: None)
+    monkeypatch.setattr(driver, "_caffeinate", lambda: None)
+    monkeypatch.setattr(driver, "_kill_caffeinate", lambda *a: None)
+    result = driver.run_loop(repo=str(tmp_path), specs=["a.md"], cfg=_cfg(),
+                             stop_on_failure=True, state_dir=state)
+    assert result["paused"]["item"] == "a.md"
+    a = json.loads((state / "run-log.json").read_text())["items"][0]
+    assert a["status"] == "pending"
+    assert "bookkeeping_error" not in a
+
+
+def test_safe_error_masks_secrets_and_truncates():
+    e = Exception("fail\nAuthorization: Bearer abc.def-ghi123 key sk-ant-" + "a" * 30
+                  + " password=hunter2 " + "y" * 500)
+    out = driver._safe_error(e)
+    assert "\n" not in out
+    for leaked in ("abc.def-ghi123", "sk-ant-", "hunter2"):
+        assert leaked not in out
+    assert out.endswith("…") and len(out) == 301
