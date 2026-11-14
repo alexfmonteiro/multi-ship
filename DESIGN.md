@@ -130,13 +130,15 @@ multi-ship <specs...>  →  driver:
           judge error → FAIL-OPEN: log, proceed (a flaky judge can't trap the run)
     4. driver merges (deterministic, shell): gh pr merge --squash --delete-branch;
           bookkeeping via fresh `claude -p "{config.complete_cmd}"` (a skill,
-          can't run in-process; skipped if "none"/""); ff main; assert parent tree clean → mark shipped
+          can't run in-process; skipped if "none"/"") → mark shipped
+          (no local git step: the parent checkout's branch is not updated)
           bookkeeping error → still shipped, with `bookkeeping_error` surfaced
                               in notify + status (the merge is the ship)
   end:
     if HANDOFF worth consolidating (non-empty Errors/Knowledge, or ≥2 shipped):
       claude -p "/dream-run"  → reads HANDOFF.md + item reports → dream-proposals.md
     else: log "nothing durable to promote", skip
+    compare parent checkout to the start snapshot (HEAD, porcelain status)
     consolidate FOLLOWUPS → new follow-up spec (number allocated LAST, re-scan index)
     notify via {config.notify} (items shipped, follow-up spec, run-log + proposals paths,
       per-item operator checklist); kill caffeinate; exit
@@ -224,7 +226,7 @@ hardcoded model IDs, project-specific invariants, the literal test command,
 | Stop on first failure (default) | Driver routing on `{status}`/`{ok}` |
 | Re-read the order list each iteration | Gone — list lives in the driver, can't drift |
 | Parent-checkout containment (rules 11/12) | Gone — no long-lived parent session exists |
-| Per-item bookkeeping | Driver step 4 (merge + complete_cmd + ff + assert clean) |
+| Per-item bookkeeping | Driver step 4 (merge + complete_cmd) |
 | Cold-verify discipline, no destructive ops, secrets hygiene | Move into `ship-one` skill prose |
 | Follow-up spec number allocated last | Driver end step, re-scan index |
 | Snapshot/respect operator's dirty state | Driver init snapshot; stop+ask if it changes |
