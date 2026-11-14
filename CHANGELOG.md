@@ -8,6 +8,9 @@ All notable changes to multi-ship will be documented in this file.
 - Optional `base_branch` config key (default `"main"`). `ship-one` opens PRs against it
   and passes it to the build workflow, which diffs against it instead of a hardcoded
   `main`.
+- When `base_branch` is unset, `ship-one` detects the repo's default branch with
+  `gh repo view --json defaultBranchRef` and falls back to `"main"` if that fails. The
+  template no longer sets `base_branch`, so new projects use the detected branch.
 
 ### Changed
 - `ship-one` branch hygiene no longer runs `git merge --ff-only` in the operator's

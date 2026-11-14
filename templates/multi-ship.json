@@ -1,7 +1,6 @@
 {
   "build_workflow": "mixed-model-burst",
   "spec_glob": "docs/specs/*.md",
-  "base_branch": "main",
   "verify": "gh pr checks $PR --watch",
 
   "notify": "telegram",
