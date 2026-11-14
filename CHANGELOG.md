@@ -19,6 +19,10 @@ All notable changes to multi-ship will be documented in this file.
   skill that multi-ship does not ship.
 
 ### Fixed
+- The GitHub Actions recipe now authenticates `actions/checkout` and `gh` with a
+  `MULTI_SHIP_GH_TOKEN` secret (fine-grained PAT or App token) instead of
+  `GITHUB_TOKEN`, whose pushes and PRs never start CI. Workflow inputs reach the
+  script through `env:` instead of being interpolated into `run:`.
 - `--resume` with an existing run-log no longer re-resolves the spec arguments, so
   re-running the original command works after `complete_cmd` moved shipped specs away.
   The run-log order wins, and arguments that differ from it are ignored with a
