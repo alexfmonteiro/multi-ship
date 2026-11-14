@@ -22,6 +22,11 @@ All notable changes to multi-ship will be documented in this file.
   skill that multi-ship does not ship.
 
 ### Fixed
+- The end-of-run parent-checkout check no longer warns `HEAD moved` on a fast-forward
+  of the same branch (ship-one syncing `main`, `complete_cmd` committing to it). A
+  branch switch, a non-fast-forward HEAD change, or new dirty files still warn, and a
+  missing git or failed ancestry check falls back to the warning. The README Safety
+  section now says this is an end-of-run report, not a stop.
 - The GitHub Actions recipe now authenticates `actions/checkout` and `gh` with a
   `MULTI_SHIP_GH_TOKEN` secret (fine-grained PAT or App token) instead of
   `GITHUB_TOKEN`, whose pushes and PRs never start CI. Workflow inputs reach the

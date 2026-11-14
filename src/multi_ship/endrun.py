@@ -24,25 +24,48 @@ def collect_followups(item_reports: list[dict]) -> list[str]:
     return out
 
 def git_snapshot(repo: str) -> dict:
-    """HEAD + porcelain status. Fail-soft: returns {} if repo isn't a git checkout."""
+    """HEAD, branch + porcelain status. Fail-soft: returns {} if repo isn't a git checkout."""
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
                               capture_output=True, text=True).stdout.strip()
+        branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo,
+                                capture_output=True, text=True).stdout.strip()
         porc = subprocess.run(["git", "status", "--porcelain"], cwd=repo,
                               capture_output=True, text=True).stdout.splitlines()
         if not head:
             return {}
-        return {"head": head, "porcelain": porc}
+        return {"head": head, "branch": branch, "porcelain": porc}
     except (OSError, subprocess.SubprocessError):
         return {}
 
-def compare_git_state(before: dict, after: dict) -> list[str]:
-    """Human-readable descriptions of UNEXPECTED parent-checkout changes."""
+def is_ancestor(repo: str, old: str, new: str) -> bool:
+    """True iff `old` is an ancestor of `new`. Fail-soft: False on any git error."""
+    if not old or not new:
+        return False
+    try:
+        return subprocess.run(["git", "merge-base", "--is-ancestor", old, new], cwd=repo,
+                              capture_output=True, text=True).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+def compare_git_state(before: dict, after: dict, fast_forward: bool = False) -> list[str]:
+    """Human-readable descriptions of UNEXPECTED parent-checkout changes.
+
+    `fast_forward` says the old HEAD is an ancestor of the new one. A fast-forward
+    on the same named branch is expected (ship-one syncs the default branch,
+    complete_cmd may commit to it), so it isn't reported.
+    """
     if not before or not after:
         return []
     problems = []
-    if before.get("head") != after.get("head"):
-        problems.append(f"HEAD moved: {before.get('head')} -> {after.get('head')}")
+    b_branch, a_branch = before.get("branch"), after.get("branch")
+    if b_branch and a_branch and b_branch != a_branch:
+        problems.append(f"branch switched: {b_branch} -> {a_branch}")
+    elif before.get("head") != after.get("head"):
+        expected = (fast_forward and b_branch and b_branch == a_branch
+                    and b_branch != "HEAD")
+        if not expected:
+            problems.append(f"HEAD moved: {before.get('head')} -> {after.get('head')}")
     new_dirty = set(after.get("porcelain", [])) - set(before.get("porcelain", []))
     if new_dirty:
         problems.append("new uncommitted changes: " + ", ".join(sorted(new_dirty)))

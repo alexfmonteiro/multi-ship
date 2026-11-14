@@ -163,9 +163,12 @@ about where you point it.
   `--continue-on-failure`). Nothing half-shipped is left merged.
 - **Fail-closed on build/CI, fail-open on the judge.** A flaky judge can't trap a
   good run; a red build can't sneak through.
-- **Your working tree is respected.** The driver snapshots dirty parent state at
-  start and stops + notifies if it changes unexpectedly — it never reverts,
-  renames, or deletes your uncommitted work.
+- **Your working tree is respected.** The driver snapshots the parent checkout
+  (HEAD, branch, dirty files) at start and compares it at end of run. A branch
+  switch, a non-fast-forward HEAD change, or new dirty files are reported as a
+  warning in the notification; a fast-forward of the same branch (e.g. syncing
+  `main` before a push) is expected and not reported. It doesn't stop the run,
+  and it never reverts, renames, or deletes your uncommitted work.
 
 ---
 

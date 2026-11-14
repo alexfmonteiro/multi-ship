@@ -400,7 +400,10 @@ def _end_of_run(repo: str, cfg: Config, state_dir: Path, run_log: Path,
         fp = Path(state_dir) / "followups.md"
         fp.write_text("# multi-ship follow-ups\n\n" + "\n".join(f"- {f}" for f in followups) + "\n")
         followups_path = str(fp)
-    problems = endrun.compare_git_state(baseline, endrun.git_snapshot(repo))
+    after = endrun.git_snapshot(repo)
+    ff = bool(baseline and after) and endrun.is_ancestor(repo, baseline.get("head"),
+                                                          after.get("head"))
+    problems = endrun.compare_git_state(baseline, after, fast_forward=ff)
     stop_kind = stop_notes = None
     if stopped_at:
         stopped_item = next((it for it in log["items"] if it["id"] == stopped_at), None)
