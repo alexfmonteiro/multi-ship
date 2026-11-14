@@ -12,7 +12,7 @@ jobs:
       # Pure Python — no Claude CLI, no auth, so it's reliable in CI.
       - name: Static manifest + version-sync guard
         run: python scripts/validate_plugin.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with: { node-version: "20" }
       # The official check needs the authenticated Claude CLI, which CI does not
       # have — run it best-effort so a green run is informative but an auth/install
