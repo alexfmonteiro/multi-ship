@@ -54,9 +54,12 @@ Read `.claude/multi-ship.json`. Extract:
 | `build_invariants` | Project conventions string passed into the build workflow |
 | `smoke_instructions` | Smoke-test recipe passed into the build workflow |
 | `roles` | Role→model map passed into the build workflow |
-| `base_branch` | Branch PRs target and builds start from. Optional; `"main"` when absent |
+| `base_branch` | Branch PRs target and builds start from. Optional; auto-detected when absent |
 
-Below, `<base>` means the `base_branch` value.
+Below, `<base>` means the `base_branch` value. When the key is absent, detect the repo's
+default branch with
+`gh repo view --json defaultBranchRef --jq .defaultBranchRef.name`. If that command fails
+or prints nothing, use `"main"`.
 
 If the file is missing or malformed, stop immediately. Write `item-<id>.json` with
 `status: failed`, `failure_kind: "config_error"`, and
