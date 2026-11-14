@@ -20,7 +20,7 @@ items — everything cross-item lives in `.multi-ship/HANDOFF.md`. Respect it.
 Read `.multi-ship/HANDOFF.md` before touching any code.
 
 - **Errors and fixes:** if a pattern is already documented, do not repeat the mistake.
-- **Live resources:** treat the recorded main HEAD sha and CI queue state as ground truth
+- **Live resources:** treat the recorded base-branch HEAD sha and CI queue state as ground truth
   until you verify otherwise. Check out the listed open branches before creating a new one
   of the same name.
 - **Design decisions:** honor them. Diverging requires appending a new entry, not silently
@@ -54,6 +54,12 @@ Read `.claude/multi-ship.json`. Extract:
 | `build_invariants` | Project conventions string passed into the build workflow |
 | `smoke_instructions` | Smoke-test recipe passed into the build workflow |
 | `roles` | Role→model map passed into the build workflow |
+| `base_branch` | Branch PRs target and builds start from. Optional; auto-detected when absent |
+
+Below, `<base>` means the `base_branch` value. When the key is absent, detect the repo's
+default branch with
+`gh repo view --json defaultBranchRef --jq .defaultBranchRef.name`. If that command fails
+or prints nothing, use `"main"`.
 
 If the file is missing or malformed, stop immediately. Write `item-<id>.json` with
 `status: failed`, `failure_kind: "config_error"`, and
@@ -81,7 +87,8 @@ Workflow({
     roles: <roles from config>,
     invariants: <build_invariants from config>,
     test_cmd: <test_cmd from config>,
-    smoke_instructions: <smoke_instructions from config>
+    smoke_instructions: <smoke_instructions from config>,
+    base_branch: "<base>"
   }
 })
 ```
@@ -129,15 +136,19 @@ Proceed only when the build returned `built: true, ships: true`.
 
 ### 4a. Branch hygiene
 
-1. Fast-forward local main to `origin/main` (`git fetch origin main && git merge --ff-only origin/main`).
-2. Confirm the build branch is based on the current main tip. If the workflow committed on
-   a stale base, rebase the branch cleanly (`git rebase main`) before pushing.
+1. Fetch the base: `git fetch origin <base>`. This only updates `origin/<base>`. Never
+   merge into or check out a branch in the caller's checkout.
+2. Confirm the build branch is based on the current `origin/<base>` tip
+   (`git merge-base --is-ancestor origin/<base> <branch>`). If the workflow committed on
+   a stale base, rebase the branch cleanly onto `origin/<base>` before pushing. Do it in
+   a separate worktree so the caller's checkout is untouched:
+   `git worktree add <tmpdir> <branch> && git -C <tmpdir> rebase origin/<base> && git worktree remove <tmpdir>`.
 3. Push: `git push -u origin <branch>`.
 
 ### 4b. Open the PR
 
 ```
-gh pr create --head <branch> --base main \
+gh pr create --head <branch> --base <base> \
   --title "<spec title from frontmatter>" \
   --body "<pr_body_convention, issue number substituted> \n\n## Definition of Done\n- [ ] <dod item 1>\n- [ ] ..."
 ```
@@ -252,7 +263,7 @@ Append to the relevant sections. Never delete or rewrite existing content.
   non-obvious facts that future items in this run need to know.
 - **Errors and fixes:** every break encountered (CI failure, reviewer blocker, wrong
   branch base, etc.) paired with the resolution. One bullet per incident.
-- **Live resources:** update with the current main HEAD sha after your push, the PR URL,
+- **Live resources:** update with the current `origin/<base>` HEAD sha after your push, the PR URL,
   and the CI run URL. Replace stale Live resources entries with a note that they are
   superseded (do not delete — append a "superseded by" line).
 
@@ -285,4 +296,5 @@ referenced, use its env var name (e.g. `$ANTHROPIC_API_KEY`).
 
 **Stay on your branch.** Do not move the caller's working tree checkout. After all git
 operations, the caller's cwd should see the same branch it started on. Your work lives on
-`<branch>`; main only advances via `--ff-only` fetch-and-merge, never via a checkout.
+`<branch>`. The base branch is only fetched (`git fetch origin <base>`), never merged
+into or checked out in the caller's checkout.

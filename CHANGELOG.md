@@ -4,7 +4,18 @@ All notable changes to multi-ship will be documented in this file.
 
 ## Unreleased
 
+### Added
+- Optional `base_branch` config key (default `"main"`). `ship-one` opens PRs against it
+  and passes it to the build workflow, which diffs against it instead of a hardcoded
+  `main`.
+- When `base_branch` is unset, `ship-one` detects the repo's default branch with
+  `gh repo view --json defaultBranchRef` and falls back to `"main"` if that fails. The
+  template no longer sets `base_branch`, so new projects use the detected branch.
+
 ### Changed
+- `ship-one` branch hygiene no longer runs `git merge --ff-only` in the operator's
+  checkout. It fetches `origin/<base_branch>` and rebases the build branch onto it in
+  a separate worktree.
 - `complete_cmd` of `"none"` or `""` now skips post-merge bookkeeping (no `claude -p`
   call), on both the normal merge path and the already-merged `--resume` path. The
   template and example configs default to `"none"` instead of a `/complete-spec`
@@ -16,6 +27,10 @@ All notable changes to multi-ship will be documented in this file.
   branch switch, a non-fast-forward HEAD change, or new dirty files still warn, and a
   missing git or failed ancestry check falls back to the warning. The README Safety
   section now says this is an end-of-run report, not a stop.
+- The GitHub Actions recipe now authenticates `actions/checkout` and `gh` with a
+  `MULTI_SHIP_GH_TOKEN` secret (fine-grained PAT or App token) instead of
+  `GITHUB_TOKEN`, whose pushes and PRs never start CI. Workflow inputs reach the
+  script through `env:` instead of being interpolated into `run:`.
 - `--resume` with an existing run-log no longer re-resolves the spec arguments, so
   re-running the original command works after `complete_cmd` moved shipped specs away.
   The run-log order wins, and arguments that differ from it are ignored with a

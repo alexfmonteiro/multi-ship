@@ -276,6 +276,7 @@ Actions instead of tying up your laptop — see
 | `build_invariants` | One paragraph of project conventions (TDD rules, architecture constraints, etc.) injected into the build workflow prompt. | — |
 | `smoke_instructions` | Recipe for the post-build smoke test injected into the build workflow. | — |
 | `roles` | Role-to-model map (see below). | — |
+| `base_branch` | _(optional)_ Branch PRs target and builds start from (e.g. `"master"`, `"develop"`). `ship-one` fetches `origin/<base_branch>` and rebases the build branch onto it, without touching your checkout. When unset, `ship-one` uses the repo's default branch from `gh repo view --json defaultBranchRef`, falling back to `"main"`. | — |
 
 ### The `notify_telegram` block
 
