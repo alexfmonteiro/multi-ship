@@ -7,7 +7,8 @@ deviations from this design: stop-on-failure is the default with only a
 `--continue-on-failure` flag (there is no `--stop-on-failure` flag); follow-ups
 are consolidated into `.multi-ship/followups.md` (no auto-numbered follow-up
 spec is created); parent-checkout safety is a start/end git snapshot comparison
-reported in the notification (not a per-item assert); and the end-of-run
+reported in the notification (not a per-item assert; same-branch
+fast-forwards are not reported); and the end-of-run
 notification is a summary, not a per-item operator checklist.
 **License:** MIT (open source)
 **Home:** `~/Projects/multi-ship` (own git repo, published on GitHub)
