@@ -4,7 +4,15 @@ All notable changes to multi-ship will be documented in this file.
 
 ## Unreleased
 
+### Added
+- Optional `base_branch` config key (default `"main"`). `ship-one` opens PRs against it
+  and passes it to the build workflow, which diffs against it instead of a hardcoded
+  `main`.
+
 ### Changed
+- `ship-one` branch hygiene no longer runs `git merge --ff-only` in the operator's
+  checkout. It fetches `origin/<base_branch>` and rebases the build branch onto it in
+  a separate worktree.
 - `complete_cmd` of `"none"` or `""` now skips post-merge bookkeeping (no `claude -p`
   call), on both the normal merge path and the already-merged `--resume` path. The
   template and example configs default to `"none"` instead of a `/complete-spec`
